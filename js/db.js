@@ -538,6 +538,12 @@ async function participantsDeLaSession(sessionId) {
     const actifs = await db.membres.where("statut").equals("Actif").toArray();
     return actifs.map((m) => m.id);
   }
+  // A partir du 2e dimanche : le groupe de participants reste FIXE, egal
+  // a celui du premier dimanche (tous ceux qui avaient une ligne de
+  // paiement, qu'ils aient effectivement paye ou non cette semaine-la).
+  // Payer ou pas payer une semaine donnee n'exclut jamais quelqu'un des
+  // dimanches suivants -- seul un changement de statut membre (Actif ->
+  // Inactif) le retire du groupe.
   const ids = new Set();
   for (const d of dims) {
     const ps = await db.paiements.where("id_dimanche").equals(d.id).toArray();
