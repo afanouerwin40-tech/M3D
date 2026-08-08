@@ -1,7 +1,52 @@
-// db.js — Schema IndexedDB (Dexie) + donnees de depart + requetes derivees
-// Principe : Paiements est la seule source de verite pour l'argent lie aux
-// collectes. Dettes et le volet "collecte" de la Caisse ne sont JAMAIS
-// stockes : ils sont toujours recalcules a la volee depuis Paiements.
+// ============================================================================
+// db.js — Toute la couche donnees de l'app (schema IndexedDB via Dexie,
+// donnees de depart, et toutes les requetes "calculees").
+// ============================================================================
+//
+// PRINCIPE DE BASE A NE JAMAIS OUBLIER :
+// "paiements" est la SEULE source de verite pour tout ce qui touche a
+// l'argent lie aux collectes du dimanche. Les DETTES et le solde de la
+// CAISSE ne sont JAMAIS stockes tels quels dans une table : ils sont
+// toujours RECALCULES a la volee a partir de "paiements" (voir dettesList,
+// totalDettesImpayees, caisseSolde, joursAvecStats plus bas). C'est ce
+// qu'on appelle de l'"event sourcing" simplifie : on stocke les
+// evenements (chaque paiement), pas les totaux — comme ca, il n'y a
+// jamais de risque que le solde affiche se desynchronise de la realite.
+// Si un jour on est tente d'ajouter un champ "solde" ou "dette_totale"
+// stocke quelque part pour "aller plus vite", NE PAS LE FAIRE : ca cree
+// deux sources de verite qui peuvent diverger silencieusement.
+//
+// STRUCTURE DES TABLES (voir db.version(3).stores(...) plus bas pour le
+// detail des index) :
+//   membres                : fiches des membres du groupe (nom, tel, etc.)
+//   sessions                : une "session" = une periode (ex: annee 2026-2027)
+//   dimanches                : chaque dimanche de collecte realise
+//   anniversaires_du_jour   : qui est fete a chaque dimanche + montant cadeau
+//   paiements                : qui doit payer combien pour chaque dimanche,
+//                              et s'il a effectivement paye (a_paye)
+//   remboursements           : trace qu'une dette (paiement impaye) a ete
+//                              remboursee plus tard
+//   caisse_mouvements        : entrees/sorties MANUELLES de caisse (dons,
+//                              achats...), independantes des collectes
+//   parametres                : cle/valeur generique (montant par defaut,
+//                              mot de passe admin hache, session active...)
+//   activity_log              : journal de toutes les actions (audit)
+//   listes / liste_membres    : module "Mes listes" (evenements/sorties
+//                              independants des cotisations d'anniversaire)
+//
+// MIGRATIONS DE SCHEMA (Dexie) :
+// Chaque fois qu'on modifie la structure des tables, on ajoute un NOUVEAU
+// db.version(N).stores({...}) plus bas, on NE MODIFIE JAMAIS une version
+// existante (ca casserait la mise a jour pour les gens qui ont deja des
+// donnees locales dans une version anterieure). Si une migration doit
+// aussi transformer des donnees existantes, on utilise .upgrade(async tx
+// => {...}) comme dans la version 2 ci-dessous.
+//
+// SECURITE : ce depot est PUBLIC sur GitHub (necessaire pour l'hebergement
+// gratuit via GitHub Pages). Ne JAMAIS coder en dur ici un vrai nom, une
+// vraie date de naissance ou toute autre donnee personnelle d'un membre —
+// voir seedIfEmpty() plus bas qui doit rester volontairement vide.
+// ============================================================================
 
 const db = new Dexie("m3d_db");
 
@@ -180,6 +225,12 @@ async function isParticipant(idMembre, idSession) {
   return p ? dimIds.has(p.id_dimanche) : false;
 }
 
+// dettesList : liste de tous les paiements attendus mais non payes (a_paye =
+// false), avec le nom du membre et la date du dimanche deja resolus (pratique
+// pour l'affichage direct sans refaire de jointure cote UI). Une dette peut
+// avoir le statut "Remboursee" si un remboursement existe pour ce paiement
+// (voir table remboursements) : elle reste dans la liste pour l'historique,
+// mais n'est plus comptee dans totalDettesImpayees().
 async function dettesList() {
   const impayes = (await db.paiements.toArray()).filter((p) => !p.a_paye);
   const dims = await db.dimanches.toArray();
@@ -214,6 +265,16 @@ async function totalDettesImpayees() {
     .reduce((a, r) => a + r.montant, 0);
 }
 
+// caisseSolde : calcule le solde de la caisse a la volee (jamais stocke).
+// Deux sources s'additionnent :
+//   1) les mouvements manuels (caisse_mouvements) : dons, achats, depenses
+//      saisis a la main dans l'app (module Plus > Mouvements de caisse).
+//   2) le solde "collectes" : pour chaque dimanche, (argent recu des
+//      membres) - (argent verse en cadeaux d'anniversaire ce jour-la).
+// Si ce calcul parait faux un jour, verifier d'abord que tous les
+// paiements/mouvements existent bien dans la base (rien ne doit etre
+// stocke comme "solde" directement, sinon les deux sources de verite
+// peuvent diverger).
 async function caisseSolde() {
   // Solde = mouvements manuels (achats, depenses) + (paiements collectes - cadeaux verses)
   const manuels = await db.caisse_mouvements.toArray();
@@ -240,6 +301,12 @@ async function caisseSolde() {
   return soldeManuel + soldeCollectes;
 }
 
+// joursAvecStats : pour CHAQUE dimanche de collecte, calcule toutes les
+// statistiques utiles a l'affichage (dashboard, recap, exports) :
+// qui a ete fete, combien ont paye, montant total collecte, montant
+// verse en cadeaux, solde du jour. Retourne du plus RECENT au plus
+// ANCIEN (out.reverse() a la fin) car c'est l'ordre attendu partout
+// dans l'app (dashboard affiche les derniers dimanches en premier).
 async function joursAvecStats() {
   const dimanches = (await db.dimanches.toArray()).sort((a, b) =>
     a.date.localeCompare(b.date),
@@ -278,6 +345,11 @@ async function joursAvecStats() {
   return out.reverse();
 }
 
+// prochainAnniversaire : pour chaque membre ayant une date de naissance
+// renseignee, calcule sa PROCHAINE occurrence d'anniversaire (cette annee
+// si pas encore passee, sinon l'annee prochaine) et le dimanche de
+// collecte qui suivra (nextSunday). Trie du plus proche au plus lointain.
+// Sert a afficher "Prochains anniversaires" sur le tableau de bord.
 async function prochainAnniversaire() {
   const membres = (await db.membres.toArray()).filter(
     (m) => m.jour_anniversaire && m.mois_anniversaire,
@@ -415,31 +487,54 @@ async function supprimerTousLesAnniversairesMembres() {
   );
 }
 
-// Supprime toutes les cotisations (paiements), tous les dimanches de
-// collecte, les anniversaires-du-jour rattaches et les remboursements
-// associes, pour repartir de zero. Les membres et la session restent
-// intacts : seul l'historique des collectes est efface.
+// ------------------------------------------------------------------
+// Reinitialise les COTISATIONS, les DETTES et la CAISSE, mais garde la
+// LISTE DES COLLECTES intacte.
+//
+// IMPORTANT (lecon apprise) : une version anterieure de cette fonction
+// effacait aussi db.dimanches et db.anniversaires_du_jour, ce qui faisait
+// disparaitre completement les dates de collecte deja creees quand on
+// cliquait sur "Reinitialiser". Ce n'est PAS le comportement voulu.
+//
+// Comportement actuel :
+//  - db.paiements.clear()         -> chaque dimanche repasse a 0/0 cotise
+//  - db.remboursements.clear()    -> les dettes redeviennent "impayees"
+//  - db.caisse_mouvements.clear() -> les mouvements manuels (dons, achats,
+//                                     etc.) sont remis a zero
+//  - db.dimanches            -> CONSERVE (les dates de collecte restent)
+//  - db.anniversaires_du_jour -> CONSERVE (qui a ete fete chaque dimanche
+//                                     reste visible)
+//  - db.membres / db.sessions -> jamais touches par cette fonction
+//
+// Si un jour on a besoin de repartir vraiment a zero (y compris les
+// dates de collecte elles-memes), il faudra une fonction SEPAREE et
+// clairement nommee (ex: supprimerToutHistoriqueCollectes()) pour ne
+// jamais confondre les deux actions.
+// ------------------------------------------------------------------
 async function reinitialiserCotisations() {
   await db.transaction(
     "rw",
-    db.dimanches,
     db.paiements,
-    db.anniversaires_du_jour,
     db.remboursements,
+    db.caisse_mouvements,
     async () => {
       await db.remboursements.clear();
       await db.paiements.clear();
-      await db.anniversaires_du_jour.clear();
-      await db.dimanches.clear();
+      await db.caisse_mouvements.clear();
     },
   );
   await log(
     "cotisations",
     "reinitialisation_totale",
-    "Toutes les cotisations, dimanches et anniversaires-du-jour ont ete supprimes",
+    "Cotisations, dettes et caisse remises a zero (dimanches conserves)",
   );
 }
 
+// marquerPaiement : bascule un paiement individuel entre paye/non paye.
+// Si aPaye=true, montant_paye est aligne sur montant_attendu (paiement
+// integral suppose). Si on a besoin un jour d'accepter des paiements
+// PARTIELS, il faudra ajouter un parametre montant explicite ici plutot
+// que de deduire automatiquement montant_paye = montant_attendu.
 async function marquerPaiement(idPaiement, aPaye) {
   const p = await db.paiements.get(idPaiement);
   if (!p) return;
@@ -450,6 +545,12 @@ async function marquerPaiement(idPaiement, aPaye) {
   await log("paiement", aPaye ? "marque_paye" : "marque_non_paye", idPaiement);
 }
 
+// participantsDeLaSession : renvoie la liste des id_membre qui doivent
+// cotiser pour cette session. S'il n'y a pas encore de dimanche cree pour
+// cette session (tout premier dimanche a venir), on prend par defaut TOUS
+// les membres actifs. Sinon, on reprend la liste des membres qui avaient
+// deja un paiement sur le dimanche precedent (pour garder la meme liste
+// de participants d'un dimanche a l'autre, sauf ajustement manuel).
 async function participantsDeLaSession(sessionId) {
   const dims = await db.dimanches
     .where("id_session")
@@ -468,6 +569,14 @@ async function participantsDeLaSession(sessionId) {
   return Array.from(ids);
 }
 
+// nouveauDimanche : cree un nouveau dimanche de collecte.
+// - Cree une ligne anniversaires_du_jour pour chaque membre fete
+//   (beneficiaireIds), avec le montant du cadeau par defaut.
+// - Cree un paiement "a_paye:false" pour chaque participant de la
+//   session, avec le montant attendu = (cotisation normale ou
+//   personnalisee du membre) x (nombre de personnes fetees ce jour,
+//   minimum 1). C'est ce facteur "nb" qui fait qu'on paie plus une
+//   semaine ou plusieurs personnes sont fetees le meme dimanche.
 async function nouveauDimanche({ date, beneficiaireIds }) {
   const sessionId = await getParam("session_active");
   const montantBase = await getParam("montant_cotisation_defaut", 500);
@@ -515,6 +624,14 @@ async function nouveauDimanche({ date, beneficiaireIds }) {
 // securite de niveau serveur : l'app etant 100% locale, elle n'a pas de
 // compte serveur ni de recuperation par email.
 // ---------------------------------------------------------------
+// ---------------------------------------------------------------
+// Mot de passe administrateur — jamais stocke en clair.
+// On stocke uniquement : un sel aleatoire (admin_salt) + le hash
+// SHA-256 de (sel + mot de passe) dans admin_hash. A la connexion, on
+// recalcule le hash avec le mot de passe saisi et on compare les deux
+// hash — le mot de passe original n'est jamais reconstituable a partir
+// de ce qui est stocke dans IndexedDB.
+// ---------------------------------------------------------------
 async function sha256Hex(str) {
   const enc = new TextEncoder().encode(str);
   const buf = await crypto.subtle.digest("SHA-256", enc);
@@ -541,6 +658,11 @@ async function verifyAdminPassword(pw) {
   return test === hash;
 }
 
+// supprimerDimanche : supprime un dimanche ET tout ce qui lui est
+// rattache (ses paiements, ses anniversaires_du_jour). A utiliser pour
+// corriger une erreur de saisie (mauvaise date, dimanche cree par
+// erreur) — PAS pour un reset global (voir reinitialiserCotisations
+// plus haut, qui garde les dimanches existants).
 async function supprimerDimanche(idDimanche) {
   await db.paiements.where("id_dimanche").equals(idDimanche).delete();
   await db.anniversaires_du_jour
@@ -562,6 +684,9 @@ async function listesAll({ archiveesSeulement = null } = {}) {
   if (archiveesSeulement === false) all = all.filter((l) => !l.archivee);
   return all.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
+// creerListe : cree une nouvelle liste/evenement. couleur et icone ont
+// des valeurs par defaut si non fournies (bleu #2563EB, icone etoile)
+// pour que l'app ne plante jamais si l'appel omet ces champs.
 async function creerListe({
   nom,
   description,
@@ -600,6 +725,10 @@ async function archiverListe(id, archivee) {
   await db.listes.update(id, { archivee });
   await log("liste", archivee ? "archivee" : "desarchivee", id);
 }
+// dupliquerListe : copie une liste existante (nom, couleur, description...)
+// SANS les statuts de presence : tous les membres repartent a "attente"
+// dans la copie. Pratique pour reutiliser une liste d'un evenement
+// recurrent (ex: "Reunion mensuelle") sans repartir de zero a chaque fois.
 async function dupliquerListe(id) {
   const src = await db.listes.get(id);
   if (!src) return null;
@@ -683,6 +812,17 @@ async function definirPresenceListe(idListe, idMembre, presence) {
 // bord et les exports (PDF/Excel) du rapport complet. Rassemble ici pour
 // n'avoir cette logique ecrite qu'une seule fois.
 // ---------------------------------------------------------------
+// rapportStats : agrege TOUTES les statistiques utilisees par le
+// tableau de bord et le rapport PDF/Excel complet, en un seul appel.
+// Regroupe notamment :
+//  - repartition des membres par fonction et par mois de naissance
+//  - "regularite" : sur tous les dimanches ou un membre avait un
+//    paiement attendu, le ratio (fois payees / fois attendues). Sert a
+//    identifier les membres les plus assidus (plusReguliers) et ceux a
+//    relancer (absents). Seuil minimum de 2 dimanches pour apparaitre
+//    dans ces classements (evite de juger sur un seul dimanche).
+// Si on ajoute une nouvelle statistique au rapport, c'est ICI qu'il
+// faut l'ajouter, pas recalculer ailleurs dans app.js.
 async function rapportStats() {
   const [membres, joursStats, dettesTotal, solde, listes] = await Promise.all([
     listMembres(),
