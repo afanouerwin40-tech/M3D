@@ -1,9 +1,17 @@
 // app.js — Routeur + vues. Vanilla JS, pas de framework (choix du cahier des charges).
 
 const fmt = (n) => Math.round(n).toLocaleString("fr-FR") + " F";
-const fmtDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("fr-FR", { day: "2-digit", month: "2-digit", year: "numeric" });
+const fmtDate = (iso) =>
+  new Date(iso + "T00:00:00").toLocaleDateString("fr-FR", {
+    day: "2-digit",
+    month: "2-digit",
+    year: "numeric",
+  });
 const fullName = (m) => (m.nom ? `${m.nom} ${m.prenom}` : m.prenom);
-const initials = (m) => (((m.nom || m.prenom || "?")[0] || "?") + ((m.prenom || "")[0] || "")).toUpperCase();
+const initials = (m) =>
+  (
+    ((m.nom || m.prenom || "?")[0] || "?") + ((m.prenom || "")[0] || "")
+  ).toUpperCase();
 
 // ================================================================
 // esc() — ECHAPPEMENT HTML ANTI-XSS. NE JAMAIS SUPPRIMER CETTE FONCTION.
@@ -24,26 +32,51 @@ const initials = (m) => (((m.nom || m.prenom || "?")[0] || "?") + ((m.prenom || 
 // si maVariable vient d'un utilisateur (formulaire, import JSON), utiliser
 // `${esc(maVariable)}`. Si c'est un nombre/une date deja formatee par
 // fmt()/fmtDate(), pas besoin, ce n'est pas du texte libre.
-const esc = (s) => String(s === null || s === undefined ? "" : s).replace(
-  /[&<>"']/g,
-  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
-);
+const esc = (s) =>
+  String(s === null || s === undefined ? "" : s).replace(
+    /[&<>"']/g,
+    (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[
+        c
+      ],
+  );
 
 // --- Listes deroulantes reutilisables (date d'anniversaire + fonction) ---
 function dayOptionsHTML(selected) {
   let out = `<option value="">--</option>`;
-  for (let d = 1; d <= 31; d++) out += `<option value="${d}"${Number(selected) === d ? " selected" : ""}>${d}</option>`;
+  for (let d = 1; d <= 31; d++)
+    out += `<option value="${d}"${Number(selected) === d ? " selected" : ""}>${d}</option>`;
   return out;
 }
 function monthOptionsHTML(selected) {
   let out = `<option value="">--</option>`;
-  MOIS_NOMS.forEach((nom, i) => { const v = i + 1; out += `<option value="${v}"${Number(selected) === v ? " selected" : ""}>${nom}</option>`; });
+  MOIS_NOMS.forEach((nom, i) => {
+    const v = i + 1;
+    out += `<option value="${v}"${Number(selected) === v ? " selected" : ""}>${nom}</option>`;
+  });
   return out;
 }
-const FONCTIONS = ["Membre","President","Vice-president","Secretaire","Secretaire adjoint","Tresorier","Tresorier adjoint","Conseiller","Charge des activites","Charge de communication","Responsable protocole","Responsable priere","Responsable musique"];
+const FONCTIONS = [
+  "Membre",
+  "President",
+  "Vice-president",
+  "Secretaire",
+  "Secretaire adjoint",
+  "Tresorier",
+  "Tresorier adjoint",
+  "Conseiller",
+  "Charge des activites",
+  "Charge de communication",
+  "Responsable protocole",
+  "Responsable priere",
+  "Responsable musique",
+];
 function fonctionOptionsHTML(selected) {
   const known = FONCTIONS.includes(selected);
-  let out = FONCTIONS.map((f) => `<option value="${f}"${f === selected ? " selected" : ""}>${f}</option>`).join("");
+  let out = FONCTIONS.map(
+    (f) =>
+      `<option value="${f}"${f === selected ? " selected" : ""}>${f}</option>`,
+  ).join("");
   out += `<option value="__autre__"${!known && selected ? " selected" : ""}>Autre</option>`;
   return out;
 }
@@ -54,12 +87,18 @@ function wireFonctionAutre(selectId, wrapId, inputId, currentValue) {
   const wrap = document.getElementById(wrapId);
   const input = document.getElementById(inputId);
   const known = FONCTIONS.includes(currentValue);
-  if (currentValue && !known) { wrap.style.display = ""; input.value = currentValue; }
-  select.addEventListener("change", () => { wrap.style.display = select.value === "__autre__" ? "" : "none"; });
+  if (currentValue && !known) {
+    wrap.style.display = "";
+    input.value = currentValue;
+  }
+  select.addEventListener("change", () => {
+    wrap.style.display = select.value === "__autre__" ? "" : "none";
+  });
 }
 function fonctionValueFrom(selectId, inputId) {
   const select = document.getElementById(selectId);
-  if (select.value === "__autre__") return document.getElementById(inputId).value.trim() || "Autre";
+  if (select.value === "__autre__")
+    return document.getElementById(inputId).value.trim() || "Autre";
   return select.value;
 }
 
@@ -73,12 +112,19 @@ let currentTab = "accueil";
 // ---------------------------------------------------------------
 function applyTheme(mode) {
   document.documentElement.setAttribute("data-theme", mode);
-  try { localStorage.setItem("m3d_theme", mode); } catch (e) {}
+  try {
+    localStorage.setItem("m3d_theme", mode);
+  } catch (e) {}
 }
 function initTheme() {
   let mode;
-  try { mode = localStorage.getItem("m3d_theme"); } catch (e) {}
-  if (!mode) mode = matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  try {
+    mode = localStorage.getItem("m3d_theme");
+  } catch (e) {}
+  if (!mode)
+    mode = matchMedia("(prefers-color-scheme: dark)").matches
+      ? "dark"
+      : "light";
   applyTheme(mode);
 }
 function toggleTheme() {
@@ -143,10 +189,18 @@ function showSetupScreen() {
     const pw = el.querySelector("#su_pw").value;
     const pw2 = el.querySelector("#su_pw2").value;
     const errEl = el.querySelector("#su_err");
-    if (pw.length < 4) { errEl.textContent = "4 caracteres minimum."; return; }
-    if (pw !== pw2) { errEl.textContent = "Les deux mots de passe ne correspondent pas."; return; }
+    if (pw.length < 4) {
+      errEl.textContent = "4 caracteres minimum.";
+      return;
+    }
+    if (pw !== pw2) {
+      errEl.textContent = "Les deux mots de passe ne correspondent pas.";
+      return;
+    }
     await setAdminPassword(pw);
-    try { sessionStorage.setItem("m3d_authed", "1"); } catch (e) {}
+    try {
+      sessionStorage.setItem("m3d_authed", "1");
+    } catch (e) {}
     el.remove();
     showTab("accueil");
   });
@@ -164,13 +218,20 @@ function showLoginScreen() {
   const doLogin = async () => {
     const pw = el.querySelector("#li_pw").value;
     const ok = await verifyAdminPassword(pw);
-    if (!ok) { el.querySelector("#li_err").textContent = "Mot de passe incorrect."; return; }
-    try { sessionStorage.setItem("m3d_authed", "1"); } catch (e) {}
+    if (!ok) {
+      el.querySelector("#li_err").textContent = "Mot de passe incorrect.";
+      return;
+    }
+    try {
+      sessionStorage.setItem("m3d_authed", "1");
+    } catch (e) {}
     el.remove();
     showTab("accueil");
   };
   el.querySelector("#li_go").addEventListener("click", doLogin);
-  el.querySelector("#li_pw").addEventListener("keydown", (e) => { if (e.key === "Enter") doLogin(); });
+  el.querySelector("#li_pw").addEventListener("keydown", (e) => {
+    if (e.key === "Enter") doLogin();
+  });
 }
 
 // Boite de confirmation qui exige le mot de passe admin (utilisee pour les
@@ -188,13 +249,25 @@ function confirmWithPassword(message) {
     `);
     wirePasswordToggles(ov);
     let settled = false;
-    const finish = (val) => { if (settled) return; settled = true; closeSheet(); resolve(val); };
-    ov.querySelector("[data-close]").addEventListener("click", () => finish(false));
-    ov.querySelector("#cwp_cancel").addEventListener("click", () => finish(false));
+    const finish = (val) => {
+      if (settled) return;
+      settled = true;
+      closeSheet();
+      resolve(val);
+    };
+    ov.querySelector("[data-close]").addEventListener("click", () =>
+      finish(false),
+    );
+    ov.querySelector("#cwp_cancel").addEventListener("click", () =>
+      finish(false),
+    );
     ov.querySelector("#cwp_go").addEventListener("click", async () => {
       const pw = ov.querySelector("#cwp_pw").value;
       const ok = await verifyAdminPassword(pw);
-      if (!ok) { ov.querySelector("#cwp_err").textContent = "Mot de passe incorrect."; return; }
+      if (!ok) {
+        ov.querySelector("#cwp_err").textContent = "Mot de passe incorrect.";
+        return;
+      }
       finish(true);
     });
   });
@@ -209,7 +282,10 @@ function toast(msg, kind = "success") {
   t.textContent = msg;
   document.getElementById("toast-host").appendChild(t);
   requestAnimationFrame(() => t.classList.add("show"));
-  setTimeout(() => { t.classList.remove("show"); setTimeout(() => t.remove(), 250); }, 2200);
+  setTimeout(() => {
+    t.classList.remove("show");
+    setTimeout(() => t.remove(), 250);
+  }, 2200);
 }
 
 // ---------------------------------------------------------------
@@ -220,7 +296,9 @@ function openSheet(html) {
   const ov = document.createElement("div");
   ov.className = "overlay";
   ov.innerHTML = `<div class="sheet">${html}</div>`;
-  ov.addEventListener("click", (e) => { if (e.target === ov) closeSheet(); });
+  ov.addEventListener("click", (e) => {
+    if (e.target === ov) closeSheet();
+  });
   document.body.appendChild(ov);
   requestAnimationFrame(() => ov.classList.add("show"));
   sheetStack.push(ov);
@@ -238,7 +316,9 @@ function closeSheet() {
 // ---------------------------------------------------------------
 async function showTab(tab) {
   currentTab = tab;
-  document.querySelectorAll(".tab").forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
+  document
+    .querySelectorAll(".tab")
+    .forEach((b) => b.classList.toggle("active", b.dataset.tab === tab));
   app.innerHTML = `<div class="skeleton-block"></div><div class="skeleton-block"></div>`;
   window.scrollTo(0, 0);
   try {
@@ -252,22 +332,37 @@ async function showTab(tab) {
     app.innerHTML = `<div class="empty">Une erreur est survenue en chargeant cet ecran. Reessaie ou reviens a l'accueil.<br><span class="small-note">${err.message}</span></div>`;
   }
 }
-document.querySelectorAll(".tab").forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
+document
+  .querySelectorAll(".tab")
+  .forEach((b) => b.addEventListener("click", () => showTab(b.dataset.tab)));
 
 // ---------------------------------------------------------------
 // ACCUEIL (Tableau de bord)
 // ---------------------------------------------------------------
 function activityLabel(a) {
   const map = {
-    "membre:cree": "Nouveau membre ajoute", "membre:modifie": "Fiche membre modifiee", "membre:statut_modifie": "Statut d'un membre change",
-    "dimanche:cree": "Nouveau dimanche de collecte", "dimanche:supprime": "Dimanche supprime",
-    "paiement:marque_paye": "Cotisation marquee payee", "paiement:marque_non_paye": "Cotisation marquee non payee",
-    "remboursement:cree": "Remboursement enregistre", "caisse:mouvement_manuel": "Mouvement de caisse manuel",
-    "liste:creee": "Nouvelle liste creee", "liste:modifiee": "Liste modifiee", "liste:supprimee": "Liste supprimee",
-    "liste:archivee": "Liste archivee", "liste:desarchivee": "Liste desarchivee", "liste:dupliquee": "Liste dupliquee",
-    "liste:membre_ajoute": "Membre ajoute a une liste", "liste:membre_retire": "Membre retire d'une liste",
-    "anniversaires:suppression_totale": "Anniversaires reinitialises", "cotisations:reinitialisation_totale": "Cotisations reinitialisees",
-    "securite:mot_de_passe_admin_defini": "Mot de passe administrateur mis a jour", "systeme:seed": "Donnees initiales chargees",
+    "membre:cree": "Nouveau membre ajoute",
+    "membre:modifie": "Fiche membre modifiee",
+    "membre:statut_modifie": "Statut d'un membre change",
+    "dimanche:cree": "Nouveau dimanche de collecte",
+    "dimanche:supprime": "Dimanche supprime",
+    "paiement:marque_paye": "Cotisation marquee payee",
+    "paiement:marque_non_paye": "Cotisation marquee non payee",
+    "remboursement:cree": "Remboursement enregistre",
+    "caisse:mouvement_manuel": "Mouvement de caisse manuel",
+    "liste:creee": "Nouvelle liste creee",
+    "liste:modifiee": "Liste modifiee",
+    "liste:supprimee": "Liste supprimee",
+    "liste:archivee": "Liste archivee",
+    "liste:desarchivee": "Liste desarchivee",
+    "liste:dupliquee": "Liste dupliquee",
+    "liste:membre_ajoute": "Membre ajoute a une liste",
+    "liste:membre_retire": "Membre retire d'une liste",
+    "anniversaires:suppression_totale": "Anniversaires reinitialises",
+    "cotisations:reinitialisation_totale": "Cotisations reinitialisees",
+    "securite:mot_de_passe_admin_defini":
+      "Mot de passe administrateur mis a jour",
+    "systeme:seed": "Donnees initiales chargees",
   };
   return map[`${a.entite}:${a.action}`] || `${a.entite} — ${a.action}`;
 }
@@ -282,47 +377,119 @@ function wireGlobalSearch() {
   if (!input) return;
   input.addEventListener("input", () => {
     clearTimeout(globalSearchTimer);
-    globalSearchTimer = setTimeout(() => runGlobalSearch(input.value, box), 120);
+    globalSearchTimer = setTimeout(
+      () => runGlobalSearch(input.value, box),
+      120,
+    );
   });
-  document.addEventListener("click", (e) => { if (!e.target.closest(".search-wrap")) box.innerHTML = ""; });
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".search-wrap")) box.innerHTML = "";
+  });
 }
 async function runGlobalSearch(qRaw, box) {
   const q = qRaw.trim().toLowerCase();
-  if (!q) { box.innerHTML = ""; return; }
-  const [membres, listes, joursStats] = await Promise.all([listMembres(), listesAll(), joursAvecStats()]);
-  const matchMembres = membres.filter((m) =>
-    fullName(m).toLowerCase().includes(q) || (m.telephone || "").includes(q) || (m.fonction || "").toLowerCase().includes(q) ||
-    (m.jour_anniversaire && `${String(m.jour_anniversaire).padStart(2,"0")}/${String(m.mois_anniversaire).padStart(2,"0")}`.includes(q)) ||
-    (m.mois_anniversaire && MOIS_NOMS[m.mois_anniversaire - 1].toLowerCase().includes(q))
-  ).slice(0, 5);
-  const matchListes = listes.filter((l) => l.nom.toLowerCase().includes(q)).slice(0, 5);
-  const matchCotis = joursStats.filter((j) => j.beneficiaires.join(" ").toLowerCase().includes(q) || fmtDate(j.dimanche.date).includes(q)).slice(0, 5);
+  if (!q) {
+    box.innerHTML = "";
+    return;
+  }
+  const [membres, listes, joursStats] = await Promise.all([
+    listMembres(),
+    listesAll(),
+    joursAvecStats(),
+  ]);
+  const matchMembres = membres
+    .filter(
+      (m) =>
+        fullName(m).toLowerCase().includes(q) ||
+        (m.telephone || "").includes(q) ||
+        (m.fonction || "").toLowerCase().includes(q) ||
+        (m.jour_anniversaire &&
+          `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`.includes(
+            q,
+          )) ||
+        (m.mois_anniversaire &&
+          MOIS_NOMS[m.mois_anniversaire - 1].toLowerCase().includes(q)),
+    )
+    .slice(0, 5);
+  const matchListes = listes
+    .filter((l) => l.nom.toLowerCase().includes(q))
+    .slice(0, 5);
+  const matchCotis = joursStats
+    .filter(
+      (j) =>
+        j.beneficiaires.join(" ").toLowerCase().includes(q) ||
+        fmtDate(j.dimanche.date).includes(q),
+    )
+    .slice(0, 5);
 
   if (!matchMembres.length && !matchListes.length && !matchCotis.length) {
     box.innerHTML = `<div class="global-search-empty">Aucun resultat pour "${qRaw}"</div>`;
     box.classList.add("show");
     return;
   }
-  const section = (title, items) => items.length ? `<div class="gsr-title">${title}</div>${items}` : "";
+  const section = (title, items) =>
+    items.length ? `<div class="gsr-title">${title}</div>${items}` : "";
   box.innerHTML =
-    section("Membres", matchMembres.map((m) => `<div class="gsr-item" data-go="membre" data-id="${m.id}"><span class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(m)}</span>${esc(fullName(m))}</div>`).join("")) +
-    section("Listes", matchListes.map((l) => `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 14)}</span>${esc(l.nom)}</div>`).join("")) +
-    section("Cotisations", matchCotis.map((j) => `<div class="gsr-item" data-go="dimanche" data-id="${j.dimanche.id}">${fmtDate(j.dimanche.date)} — ${esc(j.beneficiaires.join(", ")) || "Collecte"}</div>`).join(""));
+    section(
+      "Membres",
+      matchMembres
+        .map(
+          (m) =>
+            `<div class="gsr-item" data-go="membre" data-id="${m.id}"><span class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(m)}</span>${esc(fullName(m))}</div>`,
+        )
+        .join(""),
+    ) +
+    section(
+      "Listes",
+      matchListes
+        .map(
+          (l) =>
+            `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 14)}</span>${esc(l.nom)}</div>`,
+        )
+        .join(""),
+    ) +
+    section(
+      "Cotisations",
+      matchCotis
+        .map(
+          (j) =>
+            `<div class="gsr-item" data-go="dimanche" data-id="${j.dimanche.id}">${fmtDate(j.dimanche.date)} — ${esc(j.beneficiaires.join(", ")) || "Collecte"}</div>`,
+        )
+        .join(""),
+    );
   box.classList.add("show");
-  box.querySelectorAll("[data-go]").forEach((el) => el.addEventListener("click", () => {
-    box.innerHTML = ""; box.classList.remove("show");
-    if (el.dataset.go === "membre") { showTab("membres").then(() => openMemberDetail(el.dataset.id)); }
-    if (el.dataset.go === "liste") { renderListes().then(() => openListeDetail(el.dataset.id)); }
-    if (el.dataset.go === "dimanche") { showTab("dimanche").then(() => openWeekDetail(el.dataset.id)); }
-  }));
+  box.querySelectorAll("[data-go]").forEach((el) =>
+    el.addEventListener("click", () => {
+      box.innerHTML = "";
+      box.classList.remove("show");
+      if (el.dataset.go === "membre") {
+        showTab("membres").then(() => openMemberDetail(el.dataset.id));
+      }
+      if (el.dataset.go === "liste") {
+        renderListes().then(() => openListeDetail(el.dataset.id));
+      }
+      if (el.dataset.go === "dimanche") {
+        showTab("dimanche").then(() => openWeekDetail(el.dataset.id));
+      }
+    }),
+  );
 }
 
 async function renderAccueil() {
-  const [membres, joursStats, dettesTotal, solde, prochains, listes, activite] = await Promise.all([
-    listMembres(), joursAvecStats(), totalDettesImpayees(), caisseSolde(), prochainAnniversaire(), listesAll({ archiveesSeulement: false }), db.activity_log.orderBy("seq").reverse().limit(6).toArray(),
-  ]);
+  const [membres, joursStats, dettesTotal, solde, prochains, listes, activite] =
+    await Promise.all([
+      listMembres(),
+      joursAvecStats(),
+      totalDettesImpayees(),
+      caisseSolde(),
+      prochainAnniversaire(),
+      listesAll({ archiveesSeulement: false }),
+      db.activity_log.orderBy("seq").reverse().limit(6).toArray(),
+    ]);
   const sessionId = await getParam("session_active");
-  const participantsCount = (await Promise.all(membres.map((m) => isParticipant(m.id, sessionId)))).filter(Boolean).length;
+  const participantsCount = (
+    await Promise.all(membres.map((m) => isParticipant(m.id, sessionId)))
+  ).filter(Boolean).length;
   const totalCollecte = joursStats.reduce((a, j) => a + j.totalCollecte, 0);
   const now = new Date();
   const mois = now.getMonth() + 1;
@@ -375,35 +542,60 @@ async function renderAccueil() {
 
   `;
 
-  document.getElementById("activiteBox").innerHTML = activite.map((a) => `
+  document.getElementById("activiteBox").innerHTML =
+    activite
+      .map(
+        (a) => `
     <div class="row" style="cursor:default;">
       <div class="info"><div class="name">${activityLabel(a)}</div><div class="meta">${new Date(a.date).toLocaleString("fr-FR")}</div></div>
-    </div>`).join("") || emptyHTML("Aucune activite recente.");
+    </div>`,
+      )
+      .join("") || emptyHTML("Aucune activite recente.");
 
   wireGlobalSearch();
 
-  document.getElementById("prochainsBox").innerHTML = prochains.slice(0, 5).map((x) => {
-    const bdayIso = dateToIso(x.bday), dimIso = dateToIso(x.dimanche);
-    const diff = bdayIso !== dimIso;
-    return `<div class="row" data-id="${x.membre.id}">
+  document.getElementById("prochainsBox").innerHTML =
+    prochains
+      .slice(0, 5)
+      .map((x) => {
+        const bdayIso = dateToIso(x.bday),
+          dimIso = dateToIso(x.dimanche);
+        const diff = bdayIso !== dimIso;
+        return `<div class="row" data-id="${x.membre.id}">
       <div class="avatar">${initials(x.membre)}</div>
       <div class="info"><div class="name">${esc(fullName(x.membre))}</div>
         <div class="meta">Anniversaire le ${fmtDate(bdayIso)}${diff ? ` &middot; cotisation le dimanche ${fmtDate(dimIso)}` : " &middot; tombe un dimanche"}</div>
       </div>
       <span class="badge badge-yes">12 000 F</span>
     </div>`;
-  }).join("") || emptyHTML("Aucune date d'anniversaire connue.");
-  document.querySelectorAll("#prochainsBox .row").forEach((el) => el.addEventListener("click", () => openMemberDetail(el.dataset.id)));
+      })
+      .join("") || emptyHTML("Aucune date d'anniversaire connue.");
+  document
+    .querySelectorAll("#prochainsBox .row")
+    .forEach((el) =>
+      el.addEventListener("click", () => openMemberDetail(el.dataset.id)),
+    );
 
-  document.getElementById("moisBox").innerHTML = membresMois.map((m) => `
+  document.getElementById("moisBox").innerHTML =
+    membresMois
+      .map(
+        (m) => `
     <div class="row" data-id="${m.id}">
       <div class="avatar" style="background:var(--bg-warning);color:var(--warning);">${initials(m)}</div>
-      <div class="info"><div class="name">${esc(fullName(m))}</div><div class="meta">${String(m.jour_anniversaire).padStart(2,"0")}/${String(m.mois_anniversaire).padStart(2,"0")}</div></div>
-    </div>`).join("") || emptyHTML("Aucun anniversaire restant ce mois-ci.");
-  document.querySelectorAll("#moisBox .row").forEach((el) => el.addEventListener("click", () => openMemberDetail(el.dataset.id)));
+      <div class="info"><div class="name">${esc(fullName(m))}</div><div class="meta">${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}</div></div>
+    </div>`,
+      )
+      .join("") || emptyHTML("Aucun anniversaire restant ce mois-ci.");
+  document
+    .querySelectorAll("#moisBox .row")
+    .forEach((el) =>
+      el.addEventListener("click", () => openMemberDetail(el.dataset.id)),
+    );
 
   const last = joursStats.slice(0, 3);
-  document.getElementById("dash-weeks").innerHTML = last.map((j) => weekCardDetailedHTML(j, memById)).join("") || emptyHTML("Aucune collecte enregistree.");
+  document.getElementById("dash-weeks").innerHTML =
+    last.map((j) => weekCardDetailedHTML(j, memById)).join("") ||
+    emptyHTML("Aucune collecte enregistree.");
   attachWeekCardHandlers();
 
   lastJoursStats = joursStats;
@@ -417,7 +609,8 @@ async function renderAccueil() {
 // Redimensionnement automatique des graphiques (rotation d'ecran,
 // passage mobile/tablette/desktop, redimensionnement de fenetre)
 // ---------------------------------------------------------------
-let lastJoursStats = [], lastMembres = [];
+let lastJoursStats = [],
+  lastMembres = [];
 function redrawAccueilCharts() {
   if (currentTab !== "accueil") return;
   if (!document.getElementById("chartCaisse")) return;
@@ -432,13 +625,26 @@ function onViewportChange() {
 }
 window.addEventListener("resize", onViewportChange);
 window.addEventListener("orientationchange", onViewportChange);
-if (window.visualViewport) window.visualViewport.addEventListener("resize", onViewportChange);
+if (window.visualViewport)
+  window.visualViewport.addEventListener("resize", onViewportChange);
 
 function weekCardDetailedHTML(j, memById) {
-  const tagClass = j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
-  const tagText = j.solde > 0 ? `+ ${fmt(j.solde)} pour la caisse` : j.solde < 0 ? `Manque ${fmt(Math.abs(j.solde))}` : "Montant exact";
-  const who = j.beneficiaires.length ? esc(j.beneficiaires.join(", ")) : "Aucun anniversaire cette semaine";
-  const nonPayeurs = j.paiements.filter((p) => !p.a_paye).map((p) => memById[p.id_membre] ? esc(fullName(memById[p.id_membre])) : "?");
+  const tagClass =
+    j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
+  const tagText =
+    j.solde > 0
+      ? `+ ${fmt(j.solde)} pour la caisse`
+      : j.solde < 0
+        ? `Manque ${fmt(Math.abs(j.solde))}`
+        : "Montant exact";
+  const who = j.beneficiaires.length
+    ? esc(j.beneficiaires.join(", "))
+    : "Aucun anniversaire cette semaine";
+  const nonPayeurs = j.paiements
+    .filter((p) => !p.a_paye)
+    .map((p) =>
+      memById[p.id_membre] ? esc(fullName(memById[p.id_membre])) : "?",
+    );
   return `<div class="week-card" data-dimanche="${j.dimanche.id}">
     <div class="top"><span class="date">${fmtDate(j.dimanche.date)}</span><span class="amount">${fmt(j.totalCollecte)}</span></div>
     <div class="desc">${who}</div>
@@ -454,57 +660,96 @@ function drawCaisseChart(joursStats) {
   if (!canvas) return;
   const ordered = [...joursStats].reverse();
   const ctx = canvas.getContext("2d");
-  const W = (canvas.width = canvas.clientWidth * 2), H = (canvas.height = 160 * 2);
+  const W = (canvas.width = canvas.clientWidth * 2),
+    H = (canvas.height = 160 * 2);
   ctx.clearRect(0, 0, W, H);
-  if (ordered.length === 0) { emptyCanvasMsg(ctx, W, H); return; }
+  if (ordered.length === 0) {
+    emptyCanvasMsg(ctx, W, H);
+    return;
+  }
   let running = 0;
   const points = ordered.map((j) => (running += j.solde));
-  const max = Math.max(...points, 1), min = Math.min(...points, 0);
-  const pad = 40, x0 = pad, x1 = W - pad, y0 = H - pad, y1 = pad + 10;
+  const max = Math.max(...points, 1),
+    min = Math.min(...points, 0);
+  const pad = 40,
+    x0 = pad,
+    x1 = W - pad,
+    y0 = H - pad,
+    y1 = pad + 10;
   const stepX = points.length > 1 ? (x1 - x0) / (points.length - 1) : 0;
-  const sy = (v) => y0 - ((v - min) / ((max - min) || 1)) * (y0 - y1);
+  const sy = (v) => y0 - ((v - min) / (max - min || 1)) * (y0 - y1);
   const accent = cssVar("--accent");
-  ctx.strokeStyle = accent; ctx.lineWidth = 5; ctx.lineJoin = "round"; ctx.lineCap = "round";
+  ctx.strokeStyle = accent;
+  ctx.lineWidth = 5;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
   ctx.beginPath();
-  points.forEach((v, i) => { const x = x0 + stepX * i, y = sy(v); i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y); });
+  points.forEach((v, i) => {
+    const x = x0 + stepX * i,
+      y = sy(v);
+    i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+  });
   ctx.stroke();
   ctx.fillStyle = accent + "1A";
-  ctx.lineTo(x0 + stepX * (points.length - 1), y0); ctx.lineTo(x0, y0); ctx.closePath(); ctx.fill();
+  ctx.lineTo(x0 + stepX * (points.length - 1), y0);
+  ctx.lineTo(x0, y0);
+  ctx.closePath();
+  ctx.fill();
   ctx.fillStyle = accent;
-  points.forEach((v, i) => { const x = x0 + stepX * i, y = sy(v); ctx.beginPath(); ctx.arc(x, y, 8, 0, 7); ctx.fill(); });
+  points.forEach((v, i) => {
+    const x = x0 + stepX * i,
+      y = sy(v);
+    ctx.beginPath();
+    ctx.arc(x, y, 8, 0, 7);
+    ctx.fill();
+  });
 }
 
 function drawMonthBarChart(membres) {
   const canvas = document.getElementById("chartMois");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  const W = (canvas.width = canvas.clientWidth * 2), H = (canvas.height = 160 * 2);
+  const W = (canvas.width = canvas.clientWidth * 2),
+    H = (canvas.height = 160 * 2);
   ctx.clearRect(0, 0, W, H);
   const counts = Array(12).fill(0);
-  membres.forEach((m) => { if (m.mois_anniversaire) counts[m.mois_anniversaire - 1]++; });
+  membres.forEach((m) => {
+    if (m.mois_anniversaire) counts[m.mois_anniversaire - 1]++;
+  });
   const max = Math.max(...counts, 1);
-  const pad = 30, bottom = H - 34, top = 16;
+  const pad = 30,
+    bottom = H - 34,
+    top = 16;
   const w = (W - pad * 2) / 12;
   const accent = cssVar("--purple");
-  const labels = ["J","F","M","A","M","J","J","A","S","O","N","D"];
+  const labels = ["J", "F", "M", "A", "M", "J", "J", "A", "S", "O", "N", "D"];
   ctx.font = "20px 'Plus Jakarta Sans', sans-serif";
   ctx.fillStyle = cssVar("--text-3");
   ctx.textAlign = "center";
   counts.forEach((c, i) => {
     const h = (c / max) * (bottom - top - 10);
-    const x = pad + w * i + w * 0.2, bw = w * 0.6;
+    const x = pad + w * i + w * 0.2,
+      bw = w * 0.6;
     ctx.fillStyle = c > 0 ? accent : cssVar("--border");
     roundRectTop(ctx, x, bottom - h, bw, Math.max(h, 3), 4);
     ctx.fillStyle = cssVar("--text-3");
     ctx.fillText(labels[i], x + bw / 2, H - 10);
-    if (c > 0) { ctx.fillStyle = cssVar("--text-2"); ctx.fillText(String(c), x + bw / 2, bottom - h - 8); }
+    if (c > 0) {
+      ctx.fillStyle = cssVar("--text-2");
+      ctx.fillText(String(c), x + bw / 2, bottom - h - 8);
+    }
   });
 }
 function roundRectTop(ctx, x, y, w, h, r) {
   ctx.beginPath();
-  ctx.moveTo(x, y + h); ctx.lineTo(x, y + r); ctx.arcTo(x, y, x + r, y, r);
-  ctx.lineTo(x + w - r, y); ctx.arcTo(x + w, y, x + w, y + r, r);
-  ctx.lineTo(x + w, y + h); ctx.closePath(); ctx.fill();
+  ctx.moveTo(x, y + h);
+  ctx.lineTo(x, y + r);
+  ctx.arcTo(x, y, x + r, y, r);
+  ctx.lineTo(x + w - r, y);
+  ctx.arcTo(x + w, y, x + w, y + r, r);
+  ctx.lineTo(x + w, y + h);
+  ctx.closePath();
+  ctx.fill();
 }
 
 function drawDonutChart(jourDernier) {
@@ -512,13 +757,25 @@ function drawDonutChart(jourDernier) {
   const legend = document.getElementById("donutLegend");
   if (!canvas) return;
   const ctx = canvas.getContext("2d");
-  const W = (canvas.width = canvas.clientWidth * 2), H = (canvas.height = 160 * 2);
+  const W = (canvas.width = canvas.clientWidth * 2),
+    H = (canvas.height = 160 * 2);
   ctx.clearRect(0, 0, W, H);
-  if (!jourDernier) { emptyCanvasMsg(ctx, W, H); if (legend) legend.innerHTML = ""; return; }
-  const paye = jourDernier.nbPayants, nonPaye = jourDernier.nbTotal - jourDernier.nbPayants;
+  if (!jourDernier) {
+    emptyCanvasMsg(ctx, W, H);
+    if (legend) legend.innerHTML = "";
+    return;
+  }
+  const paye = jourDernier.nbPayants,
+    nonPaye = jourDernier.nbTotal - jourDernier.nbPayants;
   const total = paye + nonPaye || 1;
-  const cx = W / 2, cy = H / 2 - 6, r = Math.min(W, H) / 2 - 20, rInner = r * 0.62;
-  const segs = [{ v: paye, color: cssVar("--success") }, { v: nonPaye, color: cssVar("--danger") }];
+  const cx = W / 2,
+    cy = H / 2 - 6,
+    r = Math.min(W, H) / 2 - 20,
+    rInner = r * 0.62;
+  const segs = [
+    { v: paye, color: cssVar("--success") },
+    { v: nonPaye, color: cssVar("--danger") },
+  ];
   let start = -Math.PI / 2;
   segs.forEach((s) => {
     const angle = (s.v / total) * Math.PI * 2;
@@ -543,15 +800,30 @@ function drawDonutChart(jourDernier) {
   }
 }
 function emptyCanvasMsg(ctx, W, H) {
-  ctx.fillStyle = "#9CA3AF"; ctx.font = "22px 'Plus Jakarta Sans', sans-serif"; ctx.textAlign = "center";
+  ctx.fillStyle = "#9CA3AF";
+  ctx.font = "22px 'Plus Jakarta Sans', sans-serif";
+  ctx.textAlign = "center";
   ctx.fillText("Pas encore de donnees", W / 2, H / 2);
 }
-function cssVar(name) { return getComputedStyle(document.documentElement).getPropertyValue(name).trim() || "#2563EB"; }
+function cssVar(name) {
+  return (
+    getComputedStyle(document.documentElement).getPropertyValue(name).trim() ||
+    "#2563EB"
+  );
+}
 
 function weekCardHTML(j) {
-  const tagClass = j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
-  const tagText = j.solde > 0 ? `+ ${fmt(j.solde)} pour la caisse` : j.solde < 0 ? `Manque ${fmt(Math.abs(j.solde))}` : "Montant exact";
-  const who = j.beneficiaires.length ? esc(j.beneficiaires.join(", ")) : "Aucun anniversaire cette semaine";
+  const tagClass =
+    j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
+  const tagText =
+    j.solde > 0
+      ? `+ ${fmt(j.solde)} pour la caisse`
+      : j.solde < 0
+        ? `Manque ${fmt(Math.abs(j.solde))}`
+        : "Montant exact";
+  const who = j.beneficiaires.length
+    ? esc(j.beneficiaires.join(", "))
+    : "Aucun anniversaire cette semaine";
   return `<div class="week-card" data-dimanche="${j.dimanche.id}">
     <div class="top"><span class="date">${fmtDate(j.dimanche.date)}</span><span class="amount">${fmt(j.totalCollecte)}</span></div>
     <div class="desc">${who} &middot; ${j.nbPayants}/${j.nbTotal} ont cotise &middot; ${fmt(j.montantAttendu)}/membre</div>
@@ -559,9 +831,15 @@ function weekCardHTML(j) {
   </div>`;
 }
 function attachWeekCardHandlers() {
-  document.querySelectorAll(".week-card").forEach((el) => el.addEventListener("click", () => openWeekDetail(el.dataset.dimanche)));
+  document
+    .querySelectorAll(".week-card")
+    .forEach((el) =>
+      el.addEventListener("click", () => openWeekDetail(el.dataset.dimanche)),
+    );
 }
-function emptyHTML(text) { return `<div class="empty">${text}</div>`; }
+function emptyHTML(text) {
+  return `<div class="empty">${text}</div>`;
+}
 
 // ---------------------------------------------------------------
 // MEMBRES
@@ -571,7 +849,12 @@ let memberSort = "alpha";
 let memberFilterFonction = "";
 let memberFilterMois = "";
 let memberFilterStatut = "";
-function memberFiltersActive() { return !!(memberFilterFonction || memberFilterMois || memberFilterStatut) || memberSort !== "alpha"; }
+function memberFiltersActive() {
+  return (
+    !!(memberFilterFonction || memberFilterMois || memberFilterStatut) ||
+    memberSort !== "alpha"
+  );
+}
 async function renderMembres() {
   app.innerHTML = `
     <input class="search" id="memberSearch" placeholder="Rechercher un membre..." value="${esc(memberQuery)}">
@@ -581,9 +864,16 @@ async function renderMembres() {
     <div class="card list-card" id="memberList"></div>
     <div class="fab-zone"><button class="fab" id="addMemberBtn" aria-label="Ajouter un membre"><svg viewBox="0 0 24 24" width="24" height="24"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg></button></div>
   `;
-  document.getElementById("memberSearch").addEventListener("input", (e) => { memberQuery = e.target.value; renderMemberList(); });
-  document.getElementById("addMemberBtn").addEventListener("click", openAddMember);
-  document.getElementById("memberFiltersBtn").addEventListener("click", openMemberFiltersSheet);
+  document.getElementById("memberSearch").addEventListener("input", (e) => {
+    memberQuery = e.target.value;
+    renderMemberList();
+  });
+  document
+    .getElementById("addMemberBtn")
+    .addEventListener("click", openAddMember);
+  document
+    .getElementById("memberFiltersBtn")
+    .addEventListener("click", openMemberFiltersSheet);
   await renderMemberList();
 }
 function openMemberFiltersSheet() {
@@ -601,7 +891,7 @@ function openMemberFiltersSheet() {
       <select id="mf_fonction"><option value="">Toutes</option>${FONCTIONS.map((f) => `<option value="${f}"${memberFilterFonction === f ? " selected" : ""}>${f}</option>`).join("")}</select>
     </div>
     <div class="field"><label>Mois d'anniversaire</label>
-      <select id="mf_mois"><option value="">Tous</option>${MOIS_NOMS.map((nom, i) => `<option value="${i+1}"${memberFilterMois === String(i+1) ? " selected" : ""}>${nom}</option>`).join("")}</select>
+      <select id="mf_mois"><option value="">Tous</option>${MOIS_NOMS.map((nom, i) => `<option value="${i + 1}"${memberFilterMois === String(i + 1) ? " selected" : ""}>${nom}</option>`).join("")}</select>
     </div>
     <div class="field"><label>Statut</label>
       <select id="mf_statut"><option value="">Tous</option><option value="Actif"${memberFilterStatut === "Actif" ? " selected" : ""}>Actif</option><option value="Inactif"${memberFilterStatut === "Inactif" ? " selected" : ""}>Inactif</option></select>
@@ -615,38 +905,72 @@ function openMemberFiltersSheet() {
     memberFilterFonction = document.getElementById("mf_fonction").value;
     memberFilterMois = document.getElementById("mf_mois").value;
     memberFilterStatut = document.getElementById("mf_statut").value;
-    closeSheet(); renderMembres();
+    closeSheet();
+    renderMembres();
   });
   document.getElementById("mf_reset").addEventListener("click", () => {
-    memberSort = "alpha"; memberFilterFonction = ""; memberFilterMois = ""; memberFilterStatut = "";
-    closeSheet(); renderMembres();
+    memberSort = "alpha";
+    memberFilterFonction = "";
+    memberFilterMois = "";
+    memberFilterStatut = "";
+    closeSheet();
+    renderMembres();
   });
 }
 async function renderMemberList() {
   const q = memberQuery.trim().toLowerCase();
   const all = await listMembres();
-  let list = all.filter((m) => fullName(m).toLowerCase().includes(q) || (m.telephone || "").includes(q));
-  if (memberFilterFonction) list = list.filter((m) => (m.fonction || "Membre") === memberFilterFonction);
-  if (memberFilterMois) list = list.filter((m) => String(m.mois_anniversaire || "") === memberFilterMois);
-  if (memberFilterStatut) list = list.filter((m) => m.statut === memberFilterStatut);
-  if (memberSort === "date") list.sort((a, b) => (b.date_adhesion || "").localeCompare(a.date_adhesion || ""));
-  else if (memberSort === "fonction") list.sort((a, b) => (a.fonction || "Membre").localeCompare(b.fonction || "Membre") || fullName(a).localeCompare(fullName(b)));
+  let list = all.filter(
+    (m) =>
+      fullName(m).toLowerCase().includes(q) || (m.telephone || "").includes(q),
+  );
+  if (memberFilterFonction)
+    list = list.filter(
+      (m) => (m.fonction || "Membre") === memberFilterFonction,
+    );
+  if (memberFilterMois)
+    list = list.filter(
+      (m) => String(m.mois_anniversaire || "") === memberFilterMois,
+    );
+  if (memberFilterStatut)
+    list = list.filter((m) => m.statut === memberFilterStatut);
+  if (memberSort === "date")
+    list.sort((a, b) =>
+      (b.date_adhesion || "").localeCompare(a.date_adhesion || ""),
+    );
+  else if (memberSort === "fonction")
+    list.sort(
+      (a, b) =>
+        (a.fonction || "Membre").localeCompare(b.fonction || "Membre") ||
+        fullName(a).localeCompare(fullName(b)),
+    );
   // "alpha" est deja l'ordre par defaut renvoye par listMembres()
   const box = document.getElementById("memberList");
   if (!box) return;
-  box.innerHTML = list.map((m) => `
+  box.innerHTML =
+    list
+      .map(
+        (m) => `
     <div class="row" data-id="${m.id}">
       <div class="avatar" style="${m.statut === "Inactif" ? "opacity:.45" : ""}">${initials(m)}</div>
       <div class="info"><div class="name">${esc(fullName(m))}</div>
       <div class="meta">${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2, "0") + "/" + String(m.mois_anniversaire).padStart(2, "0") : "Date inconnue"} &middot; ${esc(m.fonction || "Membre")}</div></div>
       <span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span>
-    </div>`).join("") || emptyHTML("Aucun membre trouve.");
-  box.querySelectorAll(".row").forEach((el) => el.addEventListener("click", () => openMemberDetail(el.dataset.id)));
+    </div>`,
+      )
+      .join("") || emptyHTML("Aucun membre trouve.");
+  box
+    .querySelectorAll(".row")
+    .forEach((el) =>
+      el.addEventListener("click", () => openMemberDetail(el.dataset.id)),
+    );
 }
 async function openMemberDetail(id) {
   const m = await db.membres.get(id);
   const dettes = (await dettesList()).filter((d) => d.id_membre === id);
-  const dettesTot = dettes.filter((d) => d.statut === "Impayee").reduce((a, d) => a + d.montant, 0);
+  const dettesTot = dettes
+    .filter((d) => d.statut === "Impayee")
+    .reduce((a, d) => a + d.montant, 0);
   const sessionId = await getParam("session_active");
   const part = await isParticipant(id, sessionId);
   openSheet(`
@@ -661,43 +985,171 @@ async function openMemberDetail(id) {
     <div class="detail-row"><span class="k">Participe (session active)</span><span class="v">${part ? "Oui" : "Non"}</span></div>
     <div class="detail-row"><span class="k">Dettes en cours</span><span class="v">${fmt(dettesTot)}</span></div>
     <div class="sheet-actions">
-      <button class="btn btn-ghost" id="editMemberBtn" style="margin-bottom:8px;">Modifier fonction / cotisation</button>
+      <button class="btn btn-ghost" id="editMemberBtn" style="margin-bottom:8px;">Modifier les informations</button>
       <button class="btn btn-ghost" id="toggleStatutBtn">${m.statut === "Actif" ? "Marquer inactif" : "Reactiver"}</button>
     </div>
   `);
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
-  document.getElementById("toggleStatutBtn").addEventListener("click", async () => {
-    await db.membres.update(id, { statut: m.statut === "Actif" ? "Inactif" : "Actif" });
-    await log("membre", "statut_modifie", id);
-    closeSheet(); toast("Statut mis a jour"); renderMemberList();
-  });
+  document
+    .getElementById("toggleStatutBtn")
+    .addEventListener("click", async () => {
+      await db.membres.update(id, {
+        statut: m.statut === "Actif" ? "Inactif" : "Actif",
+      });
+      await log("membre", "statut_modifie", id);
+      closeSheet();
+      toast("Statut mis a jour");
+      renderMemberList();
+    });
   document.getElementById("editMemberBtn").addEventListener("click", () => {
     closeSheet();
     setTimeout(() => openEditMember(m), 200);
   });
 }
+// ---------------------------------------------------------------
+// openEditMember — fiche membre modifiable avec SAUVEGARDE AUTOMATIQUE.
+// ---------------------------------------------------------------
+// Contrairement a l'ancien formulaire (qui ne touchait que fonction/
+// telephone/cotisation et exigeait un clic sur "Enregistrer"), cette
+// version :
+//  1) permet de modifier TOUTES les informations du membre (nom, prenom,
+//     date d'anniversaire, telephone, fonction, cotisation personnalisee,
+//     observations) ;
+//  2) enregistre chaque champ tout seul, sans bouton : un debounce (le
+//     meme principe que globalSearchTimer plus haut dans ce fichier)
+//     attend que l'utilisateur arrete de taper pendant EM_AUTOSAVE_DELAY
+//     millisecondes avant d'ecrire dans IndexedDB. Les <select> (fonction,
+//     jour/mois anniversaire) sauvegardent immediatement au changement,
+//     puisqu'il n'y a pas de "frappe en cours" a attendre pour eux.
+//
+// Le champ "Prenom" reste obligatoire (c'est aussi la regle dans
+// openAddMember) : si l'utilisateur le vide, on ne sauvegarde PAS et on
+// affiche un etat d'erreur au lieu d'ecrire une fiche invalide en base.
 function openEditMember(m) {
+  const EM_AUTOSAVE_DELAY = 700; // ms d'inactivite avant sauvegarde
   openSheet(`
     <button class="sheet-close" data-close>&times;</button>
-    <h3>Modifier ${esc(fullName(m))}</h3>
+    <h3 id="em_title">Modifier ${esc(fullName(m))}</h3>
+    <div class="autosave-status as-idle" id="em_status"><span class="dot"></span><span id="em_status_text">Les modifications sont enregistrees automatiquement</span></div>
+    <div class="field"><label>Nom</label><input id="em_nom" type="text" value="${esc(m.nom || "")}"></div>
+    <div class="field"><label>Prenom</label><input id="em_prenom" type="text" value="${esc(m.prenom || "")}" required></div>
+    <div class="field-row">
+      <div class="field"><label>Jour anniv.</label><select id="em_jj">${dayOptionsHTML(m.jour_anniversaire)}</select></div>
+      <div class="field"><label>Mois anniv.</label><select id="em_mm">${monthOptionsHTML(m.mois_anniversaire)}</select></div>
+    </div>
+    <div class="field"><label>Telephone</label><input id="em_tel" type="tel" value="${esc(m.telephone || "")}"></div>
     <div class="field"><label>Fonction</label><select id="em_fonction_select">${fonctionOptionsHTML(m.fonction || "Membre")}</select></div>
     <div class="field" id="em_fonction_autre_wrap" style="display:none;"><label>Preciser la fonction</label><input id="em_fonction_autre" type="text" placeholder="Ex: Responsable des enfants"></div>
-    <div class="field"><label>Telephone</label><input id="em_tel" type="tel" value="${esc(m.telephone || "")}"></div>
     <div class="field"><label>Cotisation hebdomadaire personnalisee (FCFA)</label><input id="em_cotis" type="number" placeholder="Laisser vide = montant par defaut" value="${m.cotisation_personnalisee || ""}"></div>
     <div class="small-note">Ex. le President cotise 1000 F au lieu des 500 F habituels : indique 1000 ici pour lui.</div>
-    <button class="btn btn-primary" id="em_save" style="margin-top:14px;">Enregistrer</button>
+    <div class="field" style="margin-top:14px;"><label>Observations</label><textarea id="em_obs" placeholder="Notes libres sur ce membre...">${esc(m.observations || "")}</textarea></div>
   `);
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
-  wireFonctionAutre("em_fonction_select", "em_fonction_autre_wrap", "em_fonction_autre", m.fonction || "Membre");
-  document.getElementById("em_save").addEventListener("click", async () => {
-    const cotisVal = document.getElementById("em_cotis").value;
-    await db.membres.update(m.id, {
-      fonction: fonctionValueFrom("em_fonction_select", "em_fonction_autre"),
-      telephone: document.getElementById("em_tel").value.trim(),
-      cotisation_personnalisee: cotisVal ? Number(cotisVal) : null,
+  wireFonctionAutre(
+    "em_fonction_select",
+    "em_fonction_autre_wrap",
+    "em_fonction_autre",
+    m.fonction || "Membre",
+  );
+
+  const statusBox = document.getElementById("em_status");
+  const statusText = document.getElementById("em_status_text");
+  function setStatus(kind, text) {
+    statusBox.className = `autosave-status as-${kind}`;
+    statusText.textContent = text;
+  }
+  function formatHeure() {
+    return new Date().toLocaleTimeString("fr-FR", {
+      hour: "2-digit",
+      minute: "2-digit",
     });
-    await log("membre", "modifie", m.id);
-    closeSheet(); toast("Membre mis a jour"); renderMemberList();
+  }
+
+  let em_saveTimer = null;
+  let em_dirty = false; // true = il y a des changements pas encore ecrits en base
+  let em_hasLoggedThisBurst = false; // evite de spammer activity_log a chaque frappe
+  async function persistNow() {
+    em_saveTimer = null;
+    em_dirty = false;
+    const prenom = document.getElementById("em_prenom").value.trim();
+    if (!prenom) {
+      setStatus(
+        "error",
+        "Le prenom ne peut pas etre vide — modification non enregistree",
+      );
+      return;
+    }
+    const cotisVal = document.getElementById("em_cotis").value;
+    const patch = {
+      nom: document.getElementById("em_nom").value.trim(),
+      prenom,
+      jour_anniversaire: Number(document.getElementById("em_jj").value) || null,
+      mois_anniversaire: Number(document.getElementById("em_mm").value) || null,
+      telephone: document.getElementById("em_tel").value.trim(),
+      fonction: fonctionValueFrom("em_fonction_select", "em_fonction_autre"),
+      cotisation_personnalisee: cotisVal ? Number(cotisVal) : null,
+      observations: document.getElementById("em_obs").value.trim(),
+    };
+    try {
+      await db.membres.update(m.id, patch);
+      Object.assign(m, patch); // garde m a jour pour les prochains passages (titre, etc.)
+      if (!em_hasLoggedThisBurst) {
+        await log("membre", "modifie", m.id);
+        em_hasLoggedThisBurst = true;
+      }
+      setStatus("saved", `Enregistre a ${formatHeure()}`);
+      document.getElementById("em_title").textContent =
+        `Modifier ${fullName(m)}`;
+      renderMemberList(); // rafraichit la liste en fond, sans fermer la fiche
+    } catch (e) {
+      setStatus("error", "Erreur d'enregistrement — reessaie");
+    }
+  }
+  // scheduleSave() : sauvegarde debattue (debounce), utilisee sur les champs
+  // texte/nombre ou l'utilisateur tape en continu (evite une ecriture en
+  // base a chaque caractere).
+  function scheduleSave() {
+    setStatus("saving", "Enregistrement...");
+    em_hasLoggedThisBurst = false;
+    em_dirty = true;
+    clearTimeout(em_saveTimer);
+    em_saveTimer = setTimeout(persistNow, EM_AUTOSAVE_DELAY);
+  }
+  // saveImmediately() : pour les <select> (fonction, jour, mois) — pas de
+  // frappe en cours, donc pas besoin d'attendre.
+  function saveImmediately() {
+    setStatus("saving", "Enregistrement...");
+    em_hasLoggedThisBurst = false;
+    em_dirty = true;
+    clearTimeout(em_saveTimer);
+    persistNow();
+  }
+
+  ["em_nom", "em_prenom", "em_tel", "em_cotis", "em_obs"].forEach((id) => {
+    document.getElementById(id).addEventListener("input", scheduleSave);
+  });
+  ["em_jj", "em_mm", "em_fonction_select"].forEach((id) => {
+    document.getElementById(id).addEventListener("change", saveImmediately);
+  });
+  // Champ "Autre fonction" : c'est un input texte, donc debounce comme les autres.
+  document
+    .getElementById("em_fonction_autre")
+    .addEventListener("input", scheduleSave);
+
+  // Si l'utilisateur ferme la fiche pendant qu'une sauvegarde est encore en
+  // attente (debounce pas encore ecoule), on la force immediatement pour ne
+  // jamais perdre la derniere frappe.
+  function flushBeforeClose() {
+    if (em_dirty) {
+      clearTimeout(em_saveTimer);
+      persistNow();
+    }
+  }
+  document
+    .querySelector("[data-close]")
+    .addEventListener("click", flushBeforeClose);
+  sheetStack[sheetStack.length - 1].addEventListener("click", (e) => {
+    if (e.target.classList.contains("overlay")) flushBeforeClose();
   });
 }
 function openAddMember() {
@@ -718,23 +1170,42 @@ function openAddMember() {
     <div class="small-note">Le nouveau membre rejoint le registre general. Il participera aux collectes a partir de la prochaine session, sauf si tu l'ajoutes manuellement a un dimanche.</div>
   `);
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
-  wireFonctionAutre("f_fonction_select", "f_fonction_autre_wrap", "f_fonction_autre", "Membre");
-  document.getElementById("saveMemberBtn").addEventListener("click", async () => {
-    const prenom = document.getElementById("f_prenom").value.trim();
-    if (!prenom) { toast("Le prenom est obligatoire", "error"); return; }
-    const id = "M" + String(Date.now()).slice(-6);
-    await db.membres.add({
-      id, nom: document.getElementById("f_nom").value.trim(), prenom,
-      jour_anniversaire: Number(document.getElementById("f_jj").value) || null,
-      mois_anniversaire: Number(document.getElementById("f_mm").value) || null,
-      telephone: document.getElementById("f_tel").value.trim(),
-      fonction: fonctionValueFrom("f_fonction_select", "f_fonction_autre"),
-      cotisation_personnalisee: Number(document.getElementById("f_cotis").value) || null,
-      statut: "Actif", date_adhesion: todayISO(), observations: "",
+  wireFonctionAutre(
+    "f_fonction_select",
+    "f_fonction_autre_wrap",
+    "f_fonction_autre",
+    "Membre",
+  );
+  document
+    .getElementById("saveMemberBtn")
+    .addEventListener("click", async () => {
+      const prenom = document.getElementById("f_prenom").value.trim();
+      if (!prenom) {
+        toast("Le prenom est obligatoire", "error");
+        return;
+      }
+      const id = "M" + String(Date.now()).slice(-6);
+      await db.membres.add({
+        id,
+        nom: document.getElementById("f_nom").value.trim(),
+        prenom,
+        jour_anniversaire:
+          Number(document.getElementById("f_jj").value) || null,
+        mois_anniversaire:
+          Number(document.getElementById("f_mm").value) || null,
+        telephone: document.getElementById("f_tel").value.trim(),
+        fonction: fonctionValueFrom("f_fonction_select", "f_fonction_autre"),
+        cotisation_personnalisee:
+          Number(document.getElementById("f_cotis").value) || null,
+        statut: "Actif",
+        date_adhesion: todayISO(),
+        observations: "",
+      });
+      await log("membre", "cree", id);
+      closeSheet();
+      toast("Membre ajoute");
+      renderMemberList();
     });
-    await log("membre", "cree", id);
-    closeSheet(); toast("Membre ajoute"); renderMemberList();
-  });
 }
 
 // ---------------------------------------------------------------
@@ -743,7 +1214,9 @@ function openAddMember() {
 let dimancheShowArchives = false;
 async function renderDimanche() {
   const joursStats = await joursAvecStats();
-  const visibles = joursStats.filter((j) => dimancheShowArchives ? j.dimanche.archivee : !j.dimanche.archivee);
+  const visibles = joursStats.filter((j) =>
+    dimancheShowArchives ? j.dimanche.archivee : !j.dimanche.archivee,
+  );
   app.innerHTML = `
     <div class="section-title" style="margin-top:0;"><h2>Dimanches</h2></div>
     <button class="btn btn-primary" id="newSundayBtn" style="margin-bottom:14px;">+ Nouveau dimanche</button>
@@ -753,10 +1226,26 @@ async function renderDimanche() {
     </div>
     <div id="weeksFull"></div>
   `;
-  document.getElementById("newSundayBtn").addEventListener("click", openNewSunday);
-  document.getElementById("dim_filtre_actifs").addEventListener("click", () => { dimancheShowArchives = false; renderDimanche(); });
-  document.getElementById("dim_filtre_archives").addEventListener("click", () => { dimancheShowArchives = true; renderDimanche(); });
-  document.getElementById("weeksFull").innerHTML = visibles.map(weekCardHTML).join("") || emptyHTML(dimancheShowArchives ? "Aucun dimanche archive." : "Aucune collecte enregistree. Cree le premier dimanche.");
+  document
+    .getElementById("newSundayBtn")
+    .addEventListener("click", openNewSunday);
+  document.getElementById("dim_filtre_actifs").addEventListener("click", () => {
+    dimancheShowArchives = false;
+    renderDimanche();
+  });
+  document
+    .getElementById("dim_filtre_archives")
+    .addEventListener("click", () => {
+      dimancheShowArchives = true;
+      renderDimanche();
+    });
+  document.getElementById("weeksFull").innerHTML =
+    visibles.map(weekCardHTML).join("") ||
+    emptyHTML(
+      dimancheShowArchives
+        ? "Aucun dimanche archive."
+        : "Aucune collecte enregistree. Cree le premier dimanche.",
+    );
   attachWeekCardHandlers();
 }
 async function openNewSunday() {
@@ -781,40 +1270,70 @@ async function openNewSunday() {
   document.getElementById("nd_date").addEventListener("change", async (e) => {
     const sug = await membresAnniversaireCeDimanche(e.target.value);
     const sugIds = new Set(sug.map((m) => m.id));
-    document.querySelectorAll("#nd_benef option").forEach((o) => { o.selected = sugIds.has(o.value); });
-    document.getElementById("nd_hint").textContent = sug.length ? `Detecte automatiquement : ${sug.map(fullName).join(", ")}. Modifie la selection si besoin.` : "Aucun anniversaire detecte automatiquement pour cette date. Selectionne manuellement si besoin.";
+    document.querySelectorAll("#nd_benef option").forEach((o) => {
+      o.selected = sugIds.has(o.value);
+    });
+    document.getElementById("nd_hint").textContent = sug.length
+      ? `Detecte automatiquement : ${sug.map(fullName).join(", ")}. Modifie la selection si besoin.`
+      : "Aucun anniversaire detecte automatiquement pour cette date. Selectionne manuellement si besoin.";
   });
-  document.getElementById("createSundayBtn").addEventListener("click", async () => {
-    const date = document.getElementById("nd_date").value;
-    if (!date) { toast("Choisis une date", "error"); return; }
-    const benef = Array.from(document.getElementById("nd_benef").selectedOptions).map((o) => o.value);
-    const id = await nouveauDimanche({ date, beneficiaireIds: benef });
-    closeSheet(); toast("Dimanche cree");
-    showTab("dimanche");
-    setTimeout(() => openWeekDetail(id), 150);
-  });
+  document
+    .getElementById("createSundayBtn")
+    .addEventListener("click", async () => {
+      const date = document.getElementById("nd_date").value;
+      if (!date) {
+        toast("Choisis une date", "error");
+        return;
+      }
+      const benef = Array.from(
+        document.getElementById("nd_benef").selectedOptions,
+      ).map((o) => o.value);
+      const id = await nouveauDimanche({ date, beneficiaireIds: benef });
+      closeSheet();
+      toast("Dimanche cree");
+      showTab("dimanche");
+      setTimeout(() => openWeekDetail(id), 150);
+    });
 }
 async function openWeekDetail(dimId) {
   const dim = await db.dimanches.get(dimId);
   if (!dim) return;
-  const paiements = await db.paiements.where("id_dimanche").equals(dimId).toArray();
-  const anniv = await db.anniversaires_du_jour.where("id_dimanche").equals(dimId).toArray();
+  const paiements = await db.paiements
+    .where("id_dimanche")
+    .equals(dimId)
+    .toArray();
+  const anniv = await db.anniversaires_du_jour
+    .where("id_dimanche")
+    .equals(dimId)
+    .toArray();
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const benefNames = anniv.map((a) => memById[a.id_membre_fete] ? esc(fullName(memById[a.id_membre_fete])) : "?").join(", ") || "Collecte normale";
+  const benefNames =
+    anniv
+      .map((a) =>
+        memById[a.id_membre_fete]
+          ? esc(fullName(memById[a.id_membre_fete]))
+          : "?",
+      )
+      .join(", ") || "Collecte normale";
   const total = paiements.reduce((a, p) => a + p.montant_paye, 0);
   const montantAttendu = paiements[0] ? paiements[0].montant_attendu : 0;
 
   const rows = paiements
     .slice()
-    .sort((a, b) => fullName(memById[a.id_membre] || {}).localeCompare(fullName(memById[b.id_membre] || {})))
+    .sort((a, b) =>
+      fullName(memById[a.id_membre] || {}).localeCompare(
+        fullName(memById[b.id_membre] || {}),
+      ),
+    )
     .map((p) => {
       const m = memById[p.id_membre] || { nom: "?", prenom: "" };
       return `<div class="chip-row" data-paiement="${p.id}">
         <span class="name">${esc(fullName(m))}</span>
         <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${p.a_paye ? "Paye" : "Non paye"}</button>
       </div>`;
-    }).join("");
+    })
+    .join("");
 
   const totalId = "wd_total_" + dimId;
   const ov = openSheet(`
@@ -833,11 +1352,15 @@ async function openWeekDetail(dimId) {
     </div>
   `);
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
-  ov.querySelector("#wd_export").addEventListener("click", () => exportCotisationPDF(dimId));
+  ov.querySelector("#wd_export").addEventListener("click", () =>
+    exportCotisationPDF(dimId),
+  );
   ov.querySelector("#wd_archive").addEventListener("click", async () => {
     await db.dimanches.update(dimId, { archivee: !dim.archivee });
     await log("dimanche", dim.archivee ? "desarchive" : "archive", dimId);
-    closeSheet(); toast(dim.archivee ? "Dimanche desarchive" : "Dimanche archive"); renderDimanche();
+    closeSheet();
+    toast(dim.archivee ? "Dimanche desarchive" : "Dimanche archive");
+    renderDimanche();
   });
   ov.querySelector("#wd_date").addEventListener("change", async (e) => {
     await db.dimanches.update(dimId, { date: e.target.value });
@@ -854,18 +1377,26 @@ async function openWeekDetail(dimId) {
       btn.classList.toggle("on", !cur);
       btn.classList.toggle("off", cur);
       btn.textContent = !cur ? "Paye" : "Non paye";
-      const freshPaiements = await db.paiements.where("id_dimanche").equals(dimId).toArray();
+      const freshPaiements = await db.paiements
+        .where("id_dimanche")
+        .equals(dimId)
+        .toArray();
       const newTotal = freshPaiements.reduce((a, p) => a + p.montant_paye, 0);
       const totalEl = ov.querySelector("#" + totalId + " b");
       if (totalEl) totalEl.textContent = fmt(newTotal);
-      if (currentTab === "accueil") renderAccueil(); else if (currentTab === "dimanche") renderDimanche(); else if (currentTab === "dettes") renderDettes();
+      if (currentTab === "accueil") renderAccueil();
+      else if (currentTab === "dimanche") renderDimanche();
+      else if (currentTab === "dettes") renderDettes();
     });
   });
   ov.querySelector("#wd_delete").addEventListener("click", async () => {
-    const ok = await confirmWithPassword("Cette suppression est definitive et efface tous les paiements de ce dimanche. Confirme avec le mot de passe administrateur.");
+    const ok = await confirmWithPassword(
+      "Cette suppression est definitive et efface tous les paiements de ce dimanche. Confirme avec le mot de passe administrateur.",
+    );
     if (!ok) return;
     await supprimerDimanche(dimId);
-    closeSheet(); toast("Dimanche supprime");
+    closeSheet();
+    toast("Dimanche supprime");
     showTab(currentTab === "plus" ? "dimanche" : currentTab);
   });
 }
@@ -893,9 +1424,18 @@ async function renderDettes() {
       <div class="info"><div class="name">${esc(d.membre)}</div><div class="meta">${fmtDate(d.date)}</div></div>
       <span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>
     </div>`;
-  document.getElementById("dettesImpayees").innerHTML = impayees.map((d) => rowHTML(d, true)).join("") || emptyHTML("Aucune dette en cours.");
-  document.querySelectorAll("#dettesImpayees .row").forEach((el) => el.addEventListener("click", () => openRembourser(el.dataset.paiement)));
-  if (remboursees.length) document.getElementById("dettesRemb").innerHTML = remboursees.map((d) => rowHTML(d, false)).join("");
+  document.getElementById("dettesImpayees").innerHTML =
+    impayees.map((d) => rowHTML(d, true)).join("") ||
+    emptyHTML("Aucune dette en cours.");
+  document
+    .querySelectorAll("#dettesImpayees .row")
+    .forEach((el) =>
+      el.addEventListener("click", () => openRembourser(el.dataset.paiement)),
+    );
+  if (remboursees.length)
+    document.getElementById("dettesRemb").innerHTML = remboursees
+      .map((d) => rowHTML(d, false))
+      .join("");
 }
 function openRembourser(idPaiement) {
   openSheet(`
@@ -908,14 +1448,26 @@ function openRembourser(idPaiement) {
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
   document.getElementById("rb_save").addEventListener("click", async () => {
     const p = await db.paiements.get(idPaiement);
-    const montant = Number(document.getElementById("rb_montant").value) || p.montant_attendu;
+    const montant =
+      Number(document.getElementById("rb_montant").value) || p.montant_attendu;
     await db.remboursements.add({
-      id: uid(), id_membre: p.id_membre, id_paiement_concerne: idPaiement,
-      date_remboursement: todayISO(), montant, note: document.getElementById("rb_note").value.trim(),
+      id: uid(),
+      id_membre: p.id_membre,
+      id_paiement_concerne: idPaiement,
+      date_remboursement: todayISO(),
+      montant,
+      note: document.getElementById("rb_note").value.trim(),
     });
-    await db.caisse_mouvements.add({ id: uid(), date: todayISO(), type: "Entree", montant, libelle: `Remboursement de dette (${p.id_membre})` });
+    await db.caisse_mouvements.add({
+      id: uid(),
+      date: todayISO(),
+      type: "Entree",
+      montant,
+      libelle: `Remboursement de dette (${p.id_membre})`,
+    });
     await log("remboursement", "cree", idPaiement);
-    closeSheet(); toast("Remboursement enregistre");
+    closeSheet();
+    toast("Remboursement enregistre");
     renderDettes();
   });
 }
@@ -937,7 +1489,16 @@ const LISTE_ICONE_KEYS = Object.keys(LISTE_ICONES);
 function listeIconSVG(icone, size = 18) {
   return `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="2">${LISTE_ICONES[icone] || LISTE_ICONES.star}</svg>`;
 }
-const LISTE_COULEURS = ["#2563EB","#059669","#D97706","#DC2626","#7C3AED","#0891B2","#DB2777","#4B5563"];
+const LISTE_COULEURS = [
+  "#2563EB",
+  "#059669",
+  "#D97706",
+  "#DC2626",
+  "#7C3AED",
+  "#0891B2",
+  "#DB2777",
+  "#4B5563",
+];
 
 let listesQuery = "";
 let listesShowArchivees = false;
@@ -953,11 +1514,28 @@ async function renderListes() {
     <div id="listesBox"></div>
     <div class="fab-zone"><button class="fab" id="addListeBtn" aria-label="Creer une liste"><svg viewBox="0 0 24 24" width="24" height="24"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg></button></div>
   `;
-  document.getElementById("listesBackBtn").addEventListener("click", () => showTab("plus"));
-  document.getElementById("listesSearch").addEventListener("input", (e) => { listesQuery = e.target.value; renderListesList(); });
-  document.getElementById("addListeBtn").addEventListener("click", openCreerListe);
-  document.getElementById("lst_filtre_actives").addEventListener("click", () => { listesShowArchivees = false; renderListes(); });
-  document.getElementById("lst_filtre_archivees").addEventListener("click", () => { listesShowArchivees = true; renderListes(); });
+  document
+    .getElementById("listesBackBtn")
+    .addEventListener("click", () => showTab("plus"));
+  document.getElementById("listesSearch").addEventListener("input", (e) => {
+    listesQuery = e.target.value;
+    renderListesList();
+  });
+  document
+    .getElementById("addListeBtn")
+    .addEventListener("click", openCreerListe);
+  document
+    .getElementById("lst_filtre_actives")
+    .addEventListener("click", () => {
+      listesShowArchivees = false;
+      renderListes();
+    });
+  document
+    .getElementById("lst_filtre_archivees")
+    .addEventListener("click", () => {
+      listesShowArchivees = true;
+      renderListes();
+    });
   await renderListesList();
 }
 async function renderListesList() {
@@ -966,20 +1544,33 @@ async function renderListesList() {
   const filtered = all.filter((l) => l.nom.toLowerCase().includes(q));
   const box = document.getElementById("listesBox");
   if (!box) return;
-  if (filtered.length === 0) { box.innerHTML = emptyHTML(listesShowArchivees ? "Aucune liste archivee." : "Aucune liste. Cree la premiere avec le bouton +."); return; }
-  const cardsHtml = await Promise.all(filtered.map(async (l) => {
-    const membres = await membresDeListe(l.id);
-    const presents = membres.filter((m) => m.presence === "present").length;
-    return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${l.couleur};">
+  if (filtered.length === 0) {
+    box.innerHTML = emptyHTML(
+      listesShowArchivees
+        ? "Aucune liste archivee."
+        : "Aucune liste. Cree la premiere avec le bouton +.",
+    );
+    return;
+  }
+  const cardsHtml = await Promise.all(
+    filtered.map(async (l) => {
+      const membres = await membresDeListe(l.id);
+      const presents = membres.filter((m) => m.presence === "present").length;
+      return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${l.couleur};">
       <div class="liste-card-top">
         <span class="liste-icon" style="background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone)}</span>
         <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}</div></div>
       </div>
       ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
     </div>`;
-  }));
+    }),
+  );
   box.innerHTML = cardsHtml.join("");
-  box.querySelectorAll(".liste-card").forEach((el) => el.addEventListener("click", () => openListeDetail(el.dataset.id)));
+  box
+    .querySelectorAll(".liste-card")
+    .forEach((el) =>
+      el.addEventListener("click", () => openListeDetail(el.dataset.id)),
+    );
 }
 
 function openCreerListe() {
@@ -996,25 +1587,45 @@ function openCreerListe() {
     <button class="btn btn-primary" id="l_save">Creer la liste</button>
   `);
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
-  let couleur = LISTE_COULEURS[0], icone = LISTE_ICONE_KEYS[0];
-  document.querySelectorAll("#l_couleur_row .swatch").forEach((b) => b.addEventListener("click", () => {
-    document.querySelectorAll("#l_couleur_row .swatch").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active"); couleur = b.dataset.c;
-  }));
-  document.querySelectorAll("#l_icone_row .swatch-icon").forEach((b) => b.addEventListener("click", () => {
-    document.querySelectorAll("#l_icone_row .swatch-icon").forEach((x) => x.classList.remove("active"));
-    b.classList.add("active"); icone = b.dataset.i;
-  }));
+  let couleur = LISTE_COULEURS[0],
+    icone = LISTE_ICONE_KEYS[0];
+  document.querySelectorAll("#l_couleur_row .swatch").forEach((b) =>
+    b.addEventListener("click", () => {
+      document
+        .querySelectorAll("#l_couleur_row .swatch")
+        .forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      couleur = b.dataset.c;
+    }),
+  );
+  document.querySelectorAll("#l_icone_row .swatch-icon").forEach((b) =>
+    b.addEventListener("click", () => {
+      document
+        .querySelectorAll("#l_icone_row .swatch-icon")
+        .forEach((x) => x.classList.remove("active"));
+      b.classList.add("active");
+      icone = b.dataset.i;
+    }),
+  );
   document.getElementById("l_save").addEventListener("click", async () => {
     const nom = document.getElementById("l_nom").value.trim();
-    if (!nom) { toast("Le nom est obligatoire", "error"); return; }
+    if (!nom) {
+      toast("Le nom est obligatoire", "error");
+      return;
+    }
     const id = await creerListe({
-      nom, description: document.getElementById("l_desc").value,
+      nom,
+      description: document.getElementById("l_desc").value,
       date: document.getElementById("l_date").value || todayISO(),
-      couleur, icone, montant_demande: Number(document.getElementById("l_montant").value) || null,
+      couleur,
+      icone,
+      montant_demande:
+        Number(document.getElementById("l_montant").value) || null,
       notes: document.getElementById("l_notes").value,
     });
-    closeSheet(); toast("Liste creee"); renderListes();
+    closeSheet();
+    toast("Liste creee");
+    renderListes();
     setTimeout(() => openListeDetail(id), 200);
   });
 }
@@ -1022,7 +1633,8 @@ function openCreerListe() {
 let listeDetailQuery = "";
 let listeDetailSort = "alpha";
 async function openListeDetail(id) {
-  listeDetailQuery = ""; listeDetailSort = "alpha";
+  listeDetailQuery = "";
+  listeDetailSort = "alpha";
   await renderListeDetailSheet(id);
 }
 // renderListeDetailSheet : construit la coquille complete de la fenetre
@@ -1066,41 +1678,65 @@ async function renderListeDetailSheet(id) {
   `;
   let ov;
   const already = sheetStack[sheetStack.length - 1];
-  const isRefresh = already && already.dataset && already.dataset.listeId === id;
-  if (isRefresh) { already.querySelector(".sheet").innerHTML = html; ov = already; }
-  else { ov = openSheet(html); ov.dataset.listeId = id; }
+  const isRefresh =
+    already && already.dataset && already.dataset.listeId === id;
+  if (isRefresh) {
+    already.querySelector(".sheet").innerHTML = html;
+    ov = already;
+  } else {
+    ov = openSheet(html);
+    ov.dataset.listeId = id;
+  }
 
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   // Frapper dans la recherche ne rafraichit QUE la liste des membres, jamais
   // la coquille entiere : sinon le champ de saisie perdrait le focus a
   // chaque lettre tapee.
-  ov.querySelector("#ld_search").addEventListener("input", (e) => { listeDetailQuery = e.target.value; refreshListeDetailBody(id); });
+  ov.querySelector("#ld_search").addEventListener("input", (e) => {
+    listeDetailQuery = e.target.value;
+    refreshListeDetailBody(id);
+  });
   ov.querySelector("#ld_sort_alpha").addEventListener("click", () => {
-    listeDetailSort = "alpha"; refreshListeDetailBody(id);
-    ov.querySelector("#ld_sort_alpha").classList.add("active"); ov.querySelector("#ld_sort_presence").classList.remove("active");
+    listeDetailSort = "alpha";
+    refreshListeDetailBody(id);
+    ov.querySelector("#ld_sort_alpha").classList.add("active");
+    ov.querySelector("#ld_sort_presence").classList.remove("active");
   });
   ov.querySelector("#ld_sort_presence").addEventListener("click", () => {
-    listeDetailSort = "presence"; refreshListeDetailBody(id);
-    ov.querySelector("#ld_sort_presence").classList.add("active"); ov.querySelector("#ld_sort_alpha").classList.remove("active");
+    listeDetailSort = "presence";
+    refreshListeDetailBody(id);
+    ov.querySelector("#ld_sort_presence").classList.add("active");
+    ov.querySelector("#ld_sort_alpha").classList.remove("active");
   });
 
-  ov.querySelector("#ld_export_pdf").addEventListener("click", () => exportListePDF(id));
-  ov.querySelector("#ld_export_xls").addEventListener("click", () => exportListeExcel(id));
+  ov.querySelector("#ld_export_pdf").addEventListener("click", () =>
+    exportListePDF(id),
+  );
+  ov.querySelector("#ld_export_xls").addEventListener("click", () =>
+    exportListeExcel(id),
+  );
   ov.querySelector("#ld_duplicate").addEventListener("click", async () => {
     const newId = await dupliquerListe(id);
-    closeSheet(); toast("Liste dupliquee"); renderListes();
+    closeSheet();
+    toast("Liste dupliquee");
+    renderListes();
     setTimeout(() => openListeDetail(newId), 200);
   });
   ov.querySelector("#ld_archive").addEventListener("click", async () => {
     await archiverListe(id, !l.archivee);
     toast(l.archivee ? "Liste desarchivee" : "Liste archivee");
-    closeSheet(); renderListes();
+    closeSheet();
+    renderListes();
   });
   ov.querySelector("#ld_delete").addEventListener("click", async () => {
-    const ok = await confirmWithPassword("Cette suppression est definitive. Confirme avec le mot de passe administrateur.");
+    const ok = await confirmWithPassword(
+      "Cette suppression est definitive. Confirme avec le mot de passe administrateur.",
+    );
     if (!ok) return;
     await supprimerListe(id);
-    closeSheet(); toast("Liste supprimee"); renderListes();
+    closeSheet();
+    toast("Liste supprimee");
+    renderListes();
   });
 
   await refreshListeDetailBody(id);
@@ -1118,59 +1754,110 @@ async function refreshListeDetailBody(id) {
   if (q) {
     const inscritsIds = new Set(membres.map((m) => m.id));
     const tousMembres = await listMembres();
-    const candidats = tousMembres.filter((m) => !inscritsIds.has(m.id) && fullName(m).toLowerCase().includes(q)).slice(0, 6);
+    const candidats = tousMembres
+      .filter(
+        (m) => !inscritsIds.has(m.id) && fullName(m).toLowerCase().includes(q),
+      )
+      .slice(0, 6);
     addResultsBox.innerHTML = candidats.length
-      ? `<div class="small-note" style="margin:4px 0;">Ajouter a la liste :</div>` + candidats.map((m) => `
+      ? `<div class="small-note" style="margin:4px 0;">Ajouter a la liste :</div>` +
+        candidats
+          .map(
+            (m) => `
         <div class="row" data-add="${m.id}" style="cursor:pointer;">
           <div class="avatar">${initials(m)}</div>
           <div class="info"><div class="name">${esc(fullName(m))}</div></div>
           <span class="badge badge-yes">+ Ajouter</span>
-        </div>`).join("")
+        </div>`,
+          )
+          .join("")
       : "";
-    addResultsBox.querySelectorAll("[data-add]").forEach((el) => el.addEventListener("click", async () => {
-      await ajouterMembreListe(id, el.dataset.add);
-      listeDetailQuery = "";
-      const searchInput = ov.querySelector("#ld_search");
-      if (searchInput) searchInput.value = "";
-      toast("Membre ajoute a la liste");
-      refreshListeDetailBody(id);
-      renderListesList();
-    }));
+    addResultsBox.querySelectorAll("[data-add]").forEach((el) =>
+      el.addEventListener("click", async () => {
+        await ajouterMembreListe(id, el.dataset.add);
+        listeDetailQuery = "";
+        const searchInput = ov.querySelector("#ld_search");
+        if (searchInput) searchInput.value = "";
+        toast("Membre ajoute a la liste");
+        refreshListeDetailBody(id);
+        renderListesList();
+      }),
+    );
   } else {
     addResultsBox.innerHTML = "";
   }
 
   let shown = membres.filter((m) => fullName(m).toLowerCase().includes(q));
-  if (listeDetailSort === "alpha") shown.sort((a, b) => fullName(a).localeCompare(fullName(b)));
-  else shown.sort((a, b) => (a.presence === b.presence ? 0 : a.presence === "present" ? -1 : b.presence === "present" ? 1 : a.presence === "absent" ? -1 : 1));
+  if (listeDetailSort === "alpha")
+    shown.sort((a, b) => fullName(a).localeCompare(fullName(b)));
+  else
+    shown.sort((a, b) =>
+      a.presence === b.presence
+        ? 0
+        : a.presence === "present"
+          ? -1
+          : b.presence === "present"
+            ? 1
+            : a.presence === "absent"
+              ? -1
+              : 1,
+    );
   const membersBox = ov.querySelector("#ld_members");
-  membersBox.innerHTML = shown.length ? shown.map((m) => `
+  membersBox.innerHTML = shown.length
+    ? shown
+        .map(
+          (m) => `
     <div class="chip-row" data-membre="${m.id}">
       <span class="name">${esc(fullName(m))}</span>
       <button class="toggle ${m.presence === "present" ? "on" : m.presence === "absent" ? "off" : "wait"}" data-presence="${m.id}">${m.presence === "present" ? "Present" : m.presence === "absent" ? "Absent" : "En attente"}</button>
       <button class="chip-remove" data-remove="${m.id}" aria-label="Retirer">&times;</button>
-    </div>`).join("") : emptyHTML(q ? "Aucun membre inscrit ne correspond." : "Aucun membre inscrit. Utilise la recherche ci-dessus pour en ajouter.");
-  membersBox.querySelectorAll("[data-presence]").forEach((btn) => btn.addEventListener("click", async () => {
-    const mid = btn.dataset.presence;
-    const cur = membres.find((m) => m.id === mid).presence;
-    const next = cur === "attente" ? "present" : cur === "present" ? "absent" : "attente";
-    await definirPresenceListe(id, mid, next);
-    refreshListeDetailBody(id);
-  }));
-  membersBox.querySelectorAll("[data-remove]").forEach((btn) => btn.addEventListener("click", async () => {
-    await retirerMembreListe(id, btn.dataset.remove);
-    toast("Membre retire de la liste");
-    refreshListeDetailBody(id);
-    renderListesList();
-  }));
+    </div>`,
+        )
+        .join("")
+    : emptyHTML(
+        q
+          ? "Aucun membre inscrit ne correspond."
+          : "Aucun membre inscrit. Utilise la recherche ci-dessus pour en ajouter.",
+      );
+  membersBox.querySelectorAll("[data-presence]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const mid = btn.dataset.presence;
+      const cur = membres.find((m) => m.id === mid).presence;
+      const next =
+        cur === "attente"
+          ? "present"
+          : cur === "present"
+            ? "absent"
+            : "attente";
+      await definirPresenceListe(id, mid, next);
+      refreshListeDetailBody(id);
+    }),
+  );
+  membersBox.querySelectorAll("[data-remove]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      await retirerMembreListe(id, btn.dataset.remove);
+      toast("Membre retire de la liste");
+      refreshListeDetailBody(id);
+      renderListesList();
+    }),
+  );
 }
 
 async function exportListePDF(id) {
   const win = openPrintableWindow();
   const l = await db.listes.get(id);
   const membres = await membresDeListe(id);
-  const presenceLabel = { present: "Present", absent: "Absent", attente: "En attente" };
-  const rows = membres.map((m) => `<tr><td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td><td>${presenceLabel[m.presence]}</td></tr>`).join("");
+  const presenceLabel = {
+    present: "Present",
+    absent: "Absent",
+    attente: "En attente",
+  };
+  const rows = membres
+    .map(
+      (m) =>
+        `<tr><td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td><td>${presenceLabel[m.presence]}</td></tr>`,
+    )
+    .join("");
   const body = `
     <h1>${esc(l.nom)}</h1>
     <div class="meta">${fmtDate(l.date)}${l.description ? " &middot; " + esc(l.description) : ""}</div>
@@ -1188,16 +1875,38 @@ async function exportListePDF(id) {
   if (win) writePrintableDocument(win, l.nom, body);
 }
 async function exportListeExcel(id) {
-  if (typeof XLSX === "undefined") { toast("Module Excel indisponible hors-ligne", "error"); return; }
+  if (typeof XLSX === "undefined") {
+    toast("Module Excel indisponible hors-ligne", "error");
+    return;
+  }
   const l = await db.listes.get(id);
   const membres = await membresDeListe(id);
-  const presenceLabel = { present: "Present", absent: "Absent", attente: "En attente" };
-  const rows = membres.map((m) => ({ Nom: m.nom, Prenom: m.prenom, Telephone: m.telephone || "", Fonction: m.fonction || "Membre", Presence: presenceLabel[m.presence] }));
+  const presenceLabel = {
+    present: "Present",
+    absent: "Absent",
+    attente: "En attente",
+  };
+  const rows = membres.map((m) => ({
+    Nom: m.nom,
+    Prenom: m.prenom,
+    Telephone: m.telephone || "",
+    Fonction: m.fonction || "Membre",
+    Presence: presenceLabel[m.presence],
+  }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [{wch:16},{wch:16},{wch:14},{wch:16},{wch:12}];
+  ws["!cols"] = [
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 12 },
+  ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, l.nom.slice(0, 28) || "Liste");
-  XLSX.writeFile(wb, `m3d-liste-${(l.nom || "liste").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.xlsx`);
+  XLSX.writeFile(
+    wb,
+    `m3d-liste-${(l.nom || "liste").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.xlsx`,
+  );
   toast("Fichier Excel telecharge");
 }
 
@@ -1207,7 +1916,9 @@ async function exportListeExcel(id) {
 async function renderPlus() {
   const cd = await caisseDetail();
   const solde = cd.solde;
-  const manuels = (await db.caisse_mouvements.toArray()).sort((a, b) => b.date.localeCompare(a.date));
+  const manuels = (await db.caisse_mouvements.toArray()).sort((a, b) =>
+    b.date.localeCompare(a.date),
+  );
   const montantCotis = await getParam("montant_cotisation_defaut", 500);
   const montantCadeau = await getParam("montant_cadeau_defaut", 12000);
 
@@ -1293,45 +2004,91 @@ async function renderPlus() {
     </div>
   `;
 
-  document.getElementById("mouvList").innerHTML = manuels.map((m) => `
+  document.getElementById("mouvList").innerHTML =
+    manuels
+      .map(
+        (m) => `
     <div class="row">
       <div class="avatar" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}</div>
       <div class="info"><div class="name">${esc(m.libelle)}</div><div class="meta">${fmtDate(m.date)}</div></div>
       <span class="badge" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}${fmt(m.montant)}</span>
-    </div>`).join("") || emptyHTML("Aucun mouvement manuel.");
+    </div>`,
+      )
+      .join("") || emptyHTML("Aucun mouvement manuel.");
 
-  document.getElementById("plusListesBox").addEventListener("click", renderListes);
-  document.getElementById("addMouvBtn").addEventListener("click", openAddMouvement);
-  document.getElementById("saveParamsBtn").addEventListener("click", async () => {
-    await setParam("montant_cotisation_defaut", Number(document.getElementById("p_cotis").value) || 500);
-    await setParam("montant_cadeau_defaut", Number(document.getElementById("p_cadeau").value) || 12000);
-    toast("Parametres enregistres");
+  document
+    .getElementById("plusListesBox")
+    .addEventListener("click", renderListes);
+  document
+    .getElementById("addMouvBtn")
+    .addEventListener("click", openAddMouvement);
+  document
+    .getElementById("saveParamsBtn")
+    .addEventListener("click", async () => {
+      await setParam(
+        "montant_cotisation_defaut",
+        Number(document.getElementById("p_cotis").value) || 500,
+      );
+      await setParam(
+        "montant_cadeau_defaut",
+        Number(document.getElementById("p_cadeau").value) || 12000,
+      );
+      toast("Parametres enregistres");
+    });
+  document.getElementById("themeToggleBtn").addEventListener("click", () => {
+    toggleTheme();
+    redrawAccueilCharts();
   });
-  document.getElementById("themeToggleBtn").addEventListener("click", () => { toggleTheme(); redrawAccueilCharts(); });
-  document.getElementById("exportJsonBtn").addEventListener("click", exportBackup);
-  document.getElementById("importJsonInput").addEventListener("change", importBackup);
-  document.getElementById("exportMembresXlsBtn").addEventListener("click", exportMembresExcel);
-  document.getElementById("exportMembresPdfBtn").addEventListener("click", exportMembresPDF);
-  document.getElementById("exportDettesXlsBtn").addEventListener("click", exportDettesExcel);
-  document.getElementById("exportRapportPdfBtn").addEventListener("click", exportRapportPDF);
-  document.getElementById("exportRapportXlsBtn").addEventListener("click", exportRapportExcel);
-  document.getElementById("exportRapportDocBtn").addEventListener("click", exportRapportWord);
-  document.getElementById("resetAnnivBtn").addEventListener("click", async () => {
-    const ok = await confirmWithPassword("Ceci va effacer la date d'anniversaire de TOUS les membres (les membres eux-memes seront conserves). Cette action est definitive. Confirme avec le mot de passe administrateur.");
-    if (!ok) return;
-    await supprimerTousLesAnniversairesMembres();
-    toast("Tous les anniversaires ont ete supprimes");
-    showTab("plus");
-  });
-  document.getElementById("resetCotisBtn").addEventListener("click", async () => {
-    const ok = await confirmWithPassword("Ceci va remettre a zero les paiements, les dettes et les mouvements de caisse. Les dimanches deja crees et les membres ne sont JAMAIS touches par cette action. Confirme avec le mot de passe administrateur.");
-    if (!ok) return;
-    const avant = await db.membres.count();
-    await reinitialiserCotisations();
-    const apres = await db.membres.count();
-    toast(`Cotisations reinitialisees — ${apres} membres toujours presents (${avant} avant)`);
-    showTab("plus");
-  });
+  document
+    .getElementById("exportJsonBtn")
+    .addEventListener("click", exportBackup);
+  document
+    .getElementById("importJsonInput")
+    .addEventListener("change", importBackup);
+  document
+    .getElementById("exportMembresXlsBtn")
+    .addEventListener("click", exportMembresExcel);
+  document
+    .getElementById("exportMembresPdfBtn")
+    .addEventListener("click", exportMembresPDF);
+  document
+    .getElementById("exportDettesXlsBtn")
+    .addEventListener("click", exportDettesExcel);
+  document
+    .getElementById("exportRapportPdfBtn")
+    .addEventListener("click", exportRapportPDF);
+  document
+    .getElementById("exportRapportXlsBtn")
+    .addEventListener("click", exportRapportExcel);
+  document
+    .getElementById("exportRapportDocBtn")
+    .addEventListener("click", exportRapportWord);
+  document
+    .getElementById("resetAnnivBtn")
+    .addEventListener("click", async () => {
+      const ok = await confirmWithPassword(
+        "Ceci va effacer la date d'anniversaire de TOUS les membres (les membres eux-memes seront conserves). Cette action est definitive. Confirme avec le mot de passe administrateur.",
+      );
+      if (!ok) return;
+      await supprimerTousLesAnniversairesMembres();
+      toast("Tous les anniversaires ont ete supprimes");
+      showTab("plus");
+    });
+  document
+    .getElementById("resetCotisBtn")
+    .addEventListener("click", async () => {
+      const ok = await confirmWithPassword(
+        "Ceci va remettre a zero les paiements, les dettes et les mouvements de caisse. Les dimanches deja crees et les membres ne sont JAMAIS touches par cette action. Confirme avec le mot de passe administrateur.",
+      );
+      if (!ok) return;
+      const avant = await db.membres.count();
+      await reinitialiserCotisations();
+      const apres = await db.membres.count();
+      toast(
+        `Cotisations reinitialisees — ${apres} membres toujours presents (${avant} avant)`,
+      );
+      showTab("plus");
+    });
 }
 
 // ---------------------------------------------------------------
@@ -1346,7 +2103,10 @@ async function renderPlus() {
 // de Safari.
 function openPrintableWindow() {
   const win = window.open("", "_blank");
-  if (!win) { toast("Autorise les fenetres popup pour exporter en PDF", "error"); return null; }
+  if (!win) {
+    toast("Autorise les fenetres popup pour exporter en PDF", "error");
+    return null;
+  }
   return win;
 }
 function writePrintableDocument(win, title, bodyHtml) {
@@ -1363,27 +2123,42 @@ function writePrintableDocument(win, title, bodyHtml) {
     @media print { .print-bar{display:none;} }
   `;
   win.document.open();
-  win.document.write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>
+  win.document
+    .write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>
     <div class="print-bar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button></div>
     ${bodyHtml}
   </body></html>`);
   win.document.close();
-  win.onload = () => { try { win.focus(); win.print(); } catch (e) {} };
+  win.onload = () => {
+    try {
+      win.focus();
+      win.print();
+    } catch (e) {}
+  };
   // Certains navigateurs (dont d'anciens Safari) declenchent onload avant que
   // le document ecrit via write() soit pret : on relance apres un court delai.
-  setTimeout(() => { try { win.focus(); win.print(); } catch (e) {} }, 400);
+  setTimeout(() => {
+    try {
+      win.focus();
+      win.print();
+    } catch (e) {}
+  }, 400);
 }
 
 async function exportMembresPDF() {
   const win = openPrintableWindow();
   const membres = await listMembres();
-  const rows = membres.map((m) => `<tr>
+  const rows = membres
+    .map(
+      (m) => `<tr>
     <td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td>
     <td>${esc(m.fonction || "Membre")}</td>
-    <td>${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2,"0") + "/" + String(m.mois_anniversaire).padStart(2,"0") : "—"}</td>
+    <td>${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2, "0") + "/" + String(m.mois_anniversaire).padStart(2, "0") : "—"}</td>
     <td>${m.date_adhesion ? fmtDate(m.date_adhesion) : "—"}</td>
     <td>${m.statut}</td>
-  </tr>`).join("");
+  </tr>`,
+    )
+    .join("");
   const body = `
     <h1>Jeunesse M3D — Liste des membres</h1>
     <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${membres.length} membres</div>
@@ -1396,18 +2171,27 @@ async function exportCotisationPDF(idDimanche) {
   const win = openPrintableWindow();
   const jours = await joursAvecStats();
   const j = jours.find((x) => x.dimanche.id === idDimanche);
-  if (!j) { if (win) win.close(); toast("Dimanche introuvable", "error"); return; }
+  if (!j) {
+    if (win) win.close();
+    toast("Dimanche introuvable", "error");
+    return;
+  }
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const rows = j.paiements.map((p) => {
-    const m = memById[p.id_membre];
-    return `<tr>
+  const rows = j.paiements
+    .map((p) => {
+      const m = memById[p.id_membre];
+      return `<tr>
       <td>${m ? esc(m.nom) : "?"}</td><td>${m ? esc(m.prenom) : "?"}</td><td>${m ? esc(m.telephone || "—") : "—"}</td>
       <td>${fmt(p.montant_paye)}</td><td>${p.a_paye ? fmtDate(j.dimanche.date) : "—"}</td>
       <td>${p.a_paye ? "Paye" : "Non paye"}</td>
     </tr>`;
-  }).join("");
-  const nonPayants = j.paiements.filter((p) => !p.a_paye).map((p) => memById[p.id_membre]).filter(Boolean);
+    })
+    .join("");
+  const nonPayants = j.paiements
+    .filter((p) => !p.a_paye)
+    .map((p) => memById[p.id_membre])
+    .filter(Boolean);
   const listeNonPayants = nonPayants.length
     ? `<ul>${nonPayants.map((m) => `<li>${esc(fullName(m))}</li>`).join("")}</ul>`
     : `<p>Tous les participants ont cotise.</p>`;
@@ -1434,11 +2218,33 @@ async function exportCotisationPDF(idDimanche) {
 async function exportRapportPDF() {
   const win = openPrintableWindow();
   const r = await rapportStats();
-  const fonctionsRows = Object.entries(r.parFonction).map(([f, n]) => `<tr><td>${f}</td><td>${n}</td></tr>`).join("");
-  const moisRows = r.parMois.map((x) => `<tr><td>${x.mois}</td><td>${x.nb}</td></tr>`).join("");
-  const regRows = r.plusReguliers.map((x) => `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux*100)}%</td></tr>`).join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
-  const absRows = r.absents.map((x) => `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux*100)}%</td></tr>`).join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
-  const histRows = r.joursStats.slice(0, 20).map((j) => `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`).join("");
+  const fonctionsRows = Object.entries(r.parFonction)
+    .map(([f, n]) => `<tr><td>${f}</td><td>${n}</td></tr>`)
+    .join("");
+  const moisRows = r.parMois
+    .map((x) => `<tr><td>${x.mois}</td><td>${x.nb}</td></tr>`)
+    .join("");
+  const regRows =
+    r.plusReguliers
+      .map(
+        (x) =>
+          `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux * 100)}%</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
+  const absRows =
+    r.absents
+      .map(
+        (x) =>
+          `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux * 100)}%</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
+  const histRows = r.joursStats
+    .slice(0, 20)
+    .map(
+      (j) =>
+        `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`,
+    )
+    .join("");
   const body = `
     <h1>Jeunesse M3D — Rapport general</h1>
     <div class="meta">Genere le ${fmtDate(r.genereLe)}</div>
@@ -1450,7 +2256,7 @@ async function exportRapportPDF() {
       <tr><th>Montant distribue (cadeaux)</th><td>${fmt(r.totalDistribue)}</td></tr>
       <tr><th>Montant restant en caisse</th><td>${fmt(r.solde)}</td></tr>
       <tr><th>Dettes impayees</th><td>${fmt(r.dettesTotal)}</td></tr>
-      <tr><th>Taux de participation moyen</th><td>${Math.round(r.tauxParticipationGlobal*100)}%</td></tr>
+      <tr><th>Taux de participation moyen</th><td>${Math.round(r.tauxParticipationGlobal * 100)}%</td></tr>
       <tr><th>Listes personnalisees actives</th><td>${r.nbListes}</td></tr>
     </table>
     <h2>Repartition par fonction</h2>
@@ -1467,7 +2273,10 @@ async function exportRapportPDF() {
   if (win) writePrintableDocument(win, "Rapport general — M3D", body);
 }
 async function exportRapportExcel() {
-  if (typeof XLSX === "undefined") { toast("Module Excel indisponible hors-ligne", "error"); return; }
+  if (typeof XLSX === "undefined") {
+    toast("Module Excel indisponible hors-ligne", "error");
+    return;
+  }
   const r = await rapportStats();
   const wb = XLSX.utils.book_new();
   const wsResume = XLSX.utils.json_to_sheet([
@@ -1477,46 +2286,107 @@ async function exportRapportExcel() {
     { Indicateur: "Montant distribue", Valeur: r.totalDistribue },
     { Indicateur: "Solde caisse", Valeur: r.solde },
     { Indicateur: "Dettes impayees", Valeur: r.dettesTotal },
-    { Indicateur: "Taux de participation moyen (%)", Valeur: Math.round(r.tauxParticipationGlobal * 100) },
+    {
+      Indicateur: "Taux de participation moyen (%)",
+      Valeur: Math.round(r.tauxParticipationGlobal * 100),
+    },
     { Indicateur: "Listes personnalisees actives", Valeur: r.nbListes },
   ]);
   XLSX.utils.book_append_sheet(wb, wsResume, "Resume");
-  const wsFonctions = XLSX.utils.json_to_sheet(Object.entries(r.parFonction).map(([Fonction, Membres]) => ({ Fonction, Membres })));
+  const wsFonctions = XLSX.utils.json_to_sheet(
+    Object.entries(r.parFonction).map(([Fonction, Membres]) => ({
+      Fonction,
+      Membres,
+    })),
+  );
   XLSX.utils.book_append_sheet(wb, wsFonctions, "Fonctions");
-  const wsMois = XLSX.utils.json_to_sheet(r.parMois.map((x) => ({ Mois: x.mois, Membres: x.nb })));
+  const wsMois = XLSX.utils.json_to_sheet(
+    r.parMois.map((x) => ({ Mois: x.mois, Membres: x.nb })),
+  );
   XLSX.utils.book_append_sheet(wb, wsMois, "Anniversaires par mois");
-  const wsReg = XLSX.utils.json_to_sheet(r.plusReguliers.map((x) => ({ Membre: fullName(x.membre), Payes: x.paye, Total: x.total, "Taux (%)": Math.round(x.taux*100) })));
+  const wsReg = XLSX.utils.json_to_sheet(
+    r.plusReguliers.map((x) => ({
+      Membre: fullName(x.membre),
+      Payes: x.paye,
+      Total: x.total,
+      "Taux (%)": Math.round(x.taux * 100),
+    })),
+  );
   XLSX.utils.book_append_sheet(wb, wsReg, "Plus reguliers");
-  const wsAbs = XLSX.utils.json_to_sheet(r.absents.map((x) => ({ Membre: fullName(x.membre), Payes: x.paye, Total: x.total, "Taux (%)": Math.round(x.taux*100) })));
+  const wsAbs = XLSX.utils.json_to_sheet(
+    r.absents.map((x) => ({
+      Membre: fullName(x.membre),
+      Payes: x.paye,
+      Total: x.total,
+      "Taux (%)": Math.round(x.taux * 100),
+    })),
+  );
   XLSX.utils.book_append_sheet(wb, wsAbs, "Plus absents");
-  const wsHist = XLSX.utils.json_to_sheet(r.joursStats.map((j) => ({ Date: fmtDate(j.dimanche.date), "Anniversaire(s)": j.beneficiaires.join(", "), "Total collecte": j.totalCollecte, Payants: j.nbPayants, Total: j.nbTotal })));
+  const wsHist = XLSX.utils.json_to_sheet(
+    r.joursStats.map((j) => ({
+      Date: fmtDate(j.dimanche.date),
+      "Anniversaire(s)": j.beneficiaires.join(", "),
+      "Total collecte": j.totalCollecte,
+      Payants: j.nbPayants,
+      Total: j.nbTotal,
+    })),
+  );
   XLSX.utils.book_append_sheet(wb, wsHist, "Historique");
   XLSX.writeFile(wb, `m3d-rapport-${todayISO()}.xlsx`);
   toast("Rapport Excel telecharge");
 }
 async function exportMembresExcel() {
-  if (typeof XLSX === "undefined") { toast("Module Excel indisponible hors-ligne", "error"); return; }
+  if (typeof XLSX === "undefined") {
+    toast("Module Excel indisponible hors-ligne", "error");
+    return;
+  }
   const membres = await listMembres();
   const rows = membres.map((m) => ({
-    ID: m.id, Nom: m.nom, Prenom: m.prenom,
-    Anniversaire: m.jour_anniversaire ? `${String(m.jour_anniversaire).padStart(2,"0")}/${String(m.mois_anniversaire).padStart(2,"0")}` : "",
-    Telephone: m.telephone || "", Fonction: m.fonction || "Membre",
-    "Cotisation hebdo (F)": m.cotisation_personnalisee || "Defaut", Statut: m.statut,
-    "Date d'ajout": m.date_adhesion ? fmtDate(m.date_adhesion) : "", Observations: m.observations || "",
+    ID: m.id,
+    Nom: m.nom,
+    Prenom: m.prenom,
+    Anniversaire: m.jour_anniversaire
+      ? `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`
+      : "",
+    Telephone: m.telephone || "",
+    Fonction: m.fonction || "Membre",
+    "Cotisation hebdo (F)": m.cotisation_personnalisee || "Defaut",
+    Statut: m.statut,
+    "Date d'ajout": m.date_adhesion ? fmtDate(m.date_adhesion) : "",
+    Observations: m.observations || "",
   }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [{wch:8},{wch:16},{wch:16},{wch:12},{wch:14},{wch:14},{wch:16},{wch:10},{wch:12},{wch:24}];
+  ws["!cols"] = [
+    { wch: 8 },
+    { wch: 16 },
+    { wch: 16 },
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 10 },
+    { wch: 12 },
+    { wch: 24 },
+  ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Membres");
   XLSX.writeFile(wb, `m3d-membres-${todayISO()}.xlsx`);
   toast("Fichier Excel telecharge");
 }
 async function exportDettesExcel() {
-  if (typeof XLSX === "undefined") { toast("Module Excel indisponible hors-ligne", "error"); return; }
+  if (typeof XLSX === "undefined") {
+    toast("Module Excel indisponible hors-ligne", "error");
+    return;
+  }
   const dettes = await dettesList();
-  const rows = dettes.map((d) => ({ Membre: d.membre, Date: fmtDate(d.date), "Montant (F)": d.montant, Statut: d.statut }));
+  const rows = dettes.map((d) => ({
+    Membre: d.membre,
+    Date: fmtDate(d.date),
+    "Montant (F)": d.montant,
+    Statut: d.statut,
+  }));
   const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [{wch:20},{wch:12},{wch:12},{wch:12}];
+  ws["!cols"] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Dettes");
   XLSX.writeFile(wb, `m3d-dettes-${todayISO()}.xlsx`);
@@ -1524,13 +2394,28 @@ async function exportDettesExcel() {
 }
 async function exportRapportWord() {
   const [membres, joursStats, dettesTotal, solde] = await Promise.all([
-    listMembres(), joursAvecStats(), totalDettesImpayees(), caisseSolde(),
+    listMembres(),
+    joursAvecStats(),
+    totalDettesImpayees(),
+    caisseSolde(),
   ]);
   const dettes = (await dettesList()).filter((d) => d.statut === "Impayee");
   const style = `body{font-family:Calibri,Arial,sans-serif;color:#111827;} h1{color:#2563EB;font-size:20px;} h2{font-size:15px;margin-top:22px;border-bottom:1px solid #E5E7EB;padding-bottom:4px;} table{border-collapse:collapse;width:100%;margin-top:8px;} td,th{border:1px solid #D1D5DB;padding:6px 8px;font-size:12.5px;text-align:left;} th{background:#F3F4F6;}`;
   const kpiRows = `<table><tr><th>Membres</th><td>${membres.length}</td></tr><tr><th>Dimanches realises</th><td>${joursStats.length}</td></tr><tr><th>Solde caisse</th><td>${fmt(solde)}</td></tr><tr><th>Dettes impayees</th><td>${fmt(dettesTotal)}</td></tr></table>`;
-  const dettesRows = dettes.map((d) => `<tr><td>${esc(d.membre)}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`).join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
-  const semainesRows = joursStats.slice(0, 12).map((j) => `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`).join("");
+  const dettesRows =
+    dettes
+      .map(
+        (d) =>
+          `<tr><td>${esc(d.membre)}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
+  const semainesRows = joursStats
+    .slice(0, 12)
+    .map(
+      (j) =>
+        `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`,
+    )
+    .join("");
   const content = `
     <h1>Jeunesse M3D — Rapport de gestion</h1>
     <p>Genere le ${fmtDate(todayISO())}</p>
@@ -1542,10 +2427,14 @@ async function exportRapportWord() {
   `;
   const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Rapport M3D</title><style>${style}</style></head><body>`;
   const footer = `</body></html>`;
-  const blob = new Blob(["\ufeff", header + content + footer], { type: "application/msword" });
+  const blob = new Blob(["\ufeff", header + content + footer], {
+    type: "application/msword",
+  });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `m3d-rapport-${todayISO()}.doc`; a.click();
+  a.href = url;
+  a.download = `m3d-rapport-${todayISO()}.doc`;
+  a.click();
   URL.revokeObjectURL(url);
   toast("Rapport Word telecharge");
 }
@@ -1563,13 +2452,23 @@ function openAddMouvement() {
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
   document.getElementById("mv_save").addEventListener("click", async () => {
     const montant = Number(document.getElementById("mv_montant").value);
-    if (!montant) { toast("Montant invalide", "error"); return; }
+    if (!montant) {
+      toast("Montant invalide", "error");
+      return;
+    }
     await db.caisse_mouvements.add({
-      id: uid(), date: todayISO(), type: document.getElementById("mv_type").value,
-      montant, libelle: document.getElementById("mv_libelle").value.trim() || "Mouvement manuel",
+      id: uid(),
+      date: todayISO(),
+      type: document.getElementById("mv_type").value,
+      montant,
+      libelle:
+        document.getElementById("mv_libelle").value.trim() ||
+        "Mouvement manuel",
     });
     await log("caisse", "mouvement_manuel", montant);
-    closeSheet(); toast("Mouvement enregistre"); renderPlus();
+    closeSheet();
+    toast("Mouvement enregistre");
+    renderPlus();
   });
 }
 
@@ -1577,21 +2476,48 @@ function openAddMouvement() {
 // Sauvegarde / restauration JSON
 // ---------------------------------------------------------------
 async function exportBackup() {
-  const tables = ["membres", "sessions", "dimanches", "anniversaires_du_jour", "paiements", "remboursements", "caisse_mouvements", "parametres", "listes", "liste_membres"];
+  const tables = [
+    "membres",
+    "sessions",
+    "dimanches",
+    "anniversaires_du_jour",
+    "paiements",
+    "remboursements",
+    "caisse_mouvements",
+    "parametres",
+    "listes",
+    "liste_membres",
+  ];
   const data = {};
   for (const t of tables) data[t] = await db[t].toArray();
-  const blob = new Blob([JSON.stringify({ version: 1, exportedAt: new Date().toISOString(), data }, null, 2)], { type: "application/json" });
+  const blob = new Blob(
+    [
+      JSON.stringify(
+        { version: 1, exportedAt: new Date().toISOString(), data },
+        null,
+        2,
+      ),
+    ],
+    { type: "application/json" },
+  );
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
-  a.href = url; a.download = `m3d-sauvegarde-${todayISO()}.json`; a.click();
+  a.href = url;
+  a.download = `m3d-sauvegarde-${todayISO()}.json`;
+  a.click();
   URL.revokeObjectURL(url);
   toast("Sauvegarde telechargee");
 }
 async function importBackup(e) {
   const file = e.target.files[0];
   if (!file) return;
-  const ok = await confirmWithPassword("Importer va REMPLACER les membres, cotisations et listes actuels par le contenu de ce fichier. Verifie bien que c'est le BON fichier de sauvegarde avant de continuer. Confirme avec le mot de passe administrateur.");
-  if (!ok) { e.target.value = ""; return; }
+  const ok = await confirmWithPassword(
+    "Importer va REMPLACER les membres, cotisations et listes actuels par le contenu de ce fichier. Verifie bien que c'est le BON fichier de sauvegarde avant de continuer. Confirme avec le mot de passe administrateur.",
+  );
+  if (!ok) {
+    e.target.value = "";
+    return;
+  }
   try {
     // file.text() n'existe pas avant Safari 14 (absent sur iOS 12/13).
     // On repasse par FileReader, supporte depuis toujours sur iOS.
@@ -1602,20 +2528,48 @@ async function importBackup(e) {
       reader.readAsText(file);
     });
     const parsed = JSON.parse(text);
-    if (!parsed || typeof parsed !== "object" || typeof parsed.data !== "object" || parsed.data === null) {
+    if (
+      !parsed ||
+      typeof parsed !== "object" ||
+      typeof parsed.data !== "object" ||
+      parsed.data === null
+    ) {
       throw new Error("Structure de sauvegarde invalide.");
     }
     // Liste blanche : doit rester EXACTEMENT synchronisee avec les tables
     // declarees dans db.js (db.version(3).stores({...})). A completer a
     // chaque fois qu'une table est ajoutee au schema. Empeche un fichier
     // trafique d'injecter des cles/tables inattendues dans la base.
-    const KNOWN_TABLES = ["membres", "sessions", "dimanches", "anniversaires_du_jour", "paiements", "remboursements", "caisse_mouvements", "parametres", "activity_log", "listes", "liste_membres"];
-    const tables = Object.keys(parsed.data).filter((t) => KNOWN_TABLES.indexOf(t) !== -1 && Array.isArray(parsed.data[t]));
-    if (tables.length === 0) throw new Error("Aucune table reconnue dans ce fichier.");
-    await db.transaction("rw", tables.map((t) => db[t]), async () => {
-      for (const t of tables) { await db[t].clear(); await db[t].bulkAdd(parsed.data[t]); }
-    });
-    toast("Sauvegarde importee"); showTab("accueil");
+    const KNOWN_TABLES = [
+      "membres",
+      "sessions",
+      "dimanches",
+      "anniversaires_du_jour",
+      "paiements",
+      "remboursements",
+      "caisse_mouvements",
+      "parametres",
+      "activity_log",
+      "listes",
+      "liste_membres",
+    ];
+    const tables = Object.keys(parsed.data).filter(
+      (t) => KNOWN_TABLES.indexOf(t) !== -1 && Array.isArray(parsed.data[t]),
+    );
+    if (tables.length === 0)
+      throw new Error("Aucune table reconnue dans ce fichier.");
+    await db.transaction(
+      "rw",
+      tables.map((t) => db[t]),
+      async () => {
+        for (const t of tables) {
+          await db[t].clear();
+          await db[t].bulkAdd(parsed.data[t]);
+        }
+      },
+    );
+    toast("Sauvegarde importee");
+    showTab("accueil");
   } catch (err) {
     toast(`Fichier invalide : ${err.message || "erreur inconnue"}`, "error");
   }
@@ -1632,9 +2586,17 @@ initTheme();
     navigator.serviceWorker.register("./sw.js").catch(() => {});
   }
   const configured = await isAdminConfigured();
-  if (!configured) { showSetupScreen(); return; }
+  if (!configured) {
+    showSetupScreen();
+    return;
+  }
   let authed = false;
-  try { authed = sessionStorage.getItem("m3d_authed") === "1"; } catch (e) {}
-  if (!authed) { showLoginScreen(); return; }
+  try {
+    authed = sessionStorage.getItem("m3d_authed") === "1";
+  } catch (e) {}
+  if (!authed) {
+    showLoginScreen();
+    return;
+  }
   showTab("accueil");
 })();
