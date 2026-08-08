@@ -320,12 +320,12 @@ async function renderAccueil() {
       <div class="kpi k-purple"><div class="lbl">Listes actives</div><div class="val">${listes.length}</div></div>
     </div>
 
+    <div class="section-title"><h2>Anniversaires de ${MOIS_NOMS[mois - 1]}</h2></div>
+    <div class="card list-card" id="moisBox" style="margin-bottom:8px;"></div>
+    <div class="small-note" style="margin-bottom:22px;"></div>
+
     <div class="section-title" style="margin-top:8px;"><h2>Prochains anniversaires</h2></div>
     <div class="card list-card" id="prochainsBox" style="margin-bottom:22px;"></div>
-
-    <div class="section-title"><h2>Anniversaires de ${MOIS_NOMS[mois-1]}</h2></div>
-    <div class="card list-card" id="moisBox" style="margin-bottom:8px;"></div>
-    <div class="small-note" style="margin-bottom:22px;">Les membres deja fetes ce mois-ci (cadeau deja verse un dimanche) disparaissent automatiquement de cette liste.</div>
 
     <div class="charts-grid">
       <div class="card chart-card">
@@ -343,11 +343,12 @@ async function renderAccueil() {
       </div>
     </div>
 
+    <div class="section-title"><h2>Recapitulatif des dernieres collectes</h2></div>
+    <div id="dash-weeks"></div>
+
     <div class="section-title"><h2>Activite recente</h2></div>
     <div class="card list-card" id="activiteBox" style="margin-bottom:22px;"></div>
 
-    <div class="section-title"><h2>Recapitulatif des dernieres collectes</h2></div>
-    <div id="dash-weeks"></div>
   `;
 
   document.getElementById("activiteBox").innerHTML = activite.map((a) => `
