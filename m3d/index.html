@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>M3D Gestion</title>
+<meta name="description" content="Gestion des membres, cotisations et anniversaires — Jeunesse M3D">
+<meta name="theme-color" content="#2563EB">
+<link rel="manifest" href="./manifest.webmanifest">
+<!-- Les anciennes versions d'iOS (12/13/14) lisent mal le manifest.webmanifest
+     pour le mode "ecran d'accueil" : ces balises apple-* assurent que
+     l'app s'ouvre en plein ecran (sans barre Safari) meme sur un vieil iPad. -->
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="M3D Gestion">
+<link rel="apple-touch-icon" href="./icons/icon-192.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./css/style.css">
+</head>
+<body>
+<div id="app">
+  <div class="topbar">
+    <div class="brand">
+      <h1>Jeunesse M3D</h1>
+    </div>
+    <span class="session-chip">Session 2026-2027</span>
+  </div>
+
+  <div id="app-content"></div>
+
+  <div class="tabbar">
+    <button class="tab active" data-tab="accueil">
+      <span class="tab-bump"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 11.5 12 4l9 7.5M5 10v9a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1v-9"/></svg></span>
+      <span class="tab-label">Accueil</span>
+    </button>
+    <button class="tab" data-tab="membres">
+      <span class="tab-bump"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16 19v-1a4 4 0 0 0-4-4H7a4 4 0 0 0-4 4v1M9.5 10.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM20 19v-1a4 4 0 0 0-3-3.87M15 4.13a3.5 3.5 0 0 1 0 6.74"/></svg></span>
+      <span class="tab-label">Membres</span>
+    </button>
+    <button class="tab" data-tab="dimanche">
+      <span class="tab-bump"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg></span>
+      <span class="tab-label">Dimanche</span>
+    </button>
+    <button class="tab" data-tab="dettes">
+      <span class="tab-bump"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 4h16v16H4zM8 9h8M8 13h5"/></svg></span>
+      <span class="tab-label">Dettes</span>
+    </button>
+    <button class="tab" data-tab="plus">
+      <span class="tab-bump"><svg viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 7h16M4 12h16M4 17h16"/></svg></span>
+      <span class="tab-label">Plus</span>
+    </button>
+  </div>
+</div>
+<div id="toast-host"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+<script src="./js/db.js"></script>
+<script src="./js/app.js"></script>
+</body>
+</html>
