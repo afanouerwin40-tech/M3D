@@ -2,7 +2,7 @@
 // fonctionner une fois installee. Le cache est mis a jour en arriere-plan
 // quand une connexion existe, sans jamais bloquer l'affichage hors-ligne.
 
-const CACHE_NAME = "m3d-cache-v9";
+const CACHE_NAME = "m3d-cache-v11";
 const ASSETS = [
   "./",
   "./index.html",

@@ -541,9 +541,13 @@ async function participantsDeLaSession(sessionId) {
   // A partir du 2e dimanche : le groupe de participants reste FIXE, egal
   // a celui du premier dimanche (tous ceux qui avaient une ligne de
   // paiement, qu'ils aient effectivement paye ou non cette semaine-la).
-  // Payer ou pas payer une semaine donnee n'exclut jamais quelqu'un des
-  // dimanches suivants -- seul un changement de statut membre (Actif ->
-  // Inactif) le retire du groupe.
+  // Regle generale : ne pas payer une semaine donnee n'exclut JAMAIS
+  // automatiquement quelqu'un des dimanches suivants -- ca cree juste une
+  // dette (visible dans l'onglet Dettes). La seule facon de sortir
+  // durablement du groupe est un changement MANUEL de statut (Actif ->
+  // Inactif) sur la fiche du membre -- c'est ainsi que Nadege et Dodji,
+  // par exemple, sont geres : cas particuliers decides a la main, pas une
+  // regle automatique liee au non-paiement.
   const ids = new Set();
   for (const d of dims) {
     const ps = await db.paiements.where("id_dimanche").equals(d.id).toArray();
