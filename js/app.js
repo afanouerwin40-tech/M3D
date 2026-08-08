@@ -5,6 +5,30 @@ const fmtDate = (iso) => new Date(iso + "T00:00:00").toLocaleDateString("fr-FR",
 const fullName = (m) => (m.nom ? `${m.nom} ${m.prenom}` : m.prenom);
 const initials = (m) => (((m.nom || m.prenom || "?")[0] || "?") + ((m.prenom || "")[0] || "")).toUpperCase();
 
+// ================================================================
+// esc() — ECHAPPEMENT HTML ANTI-XSS. NE JAMAIS SUPPRIMER CETTE FONCTION.
+// ================================================================
+// Toute donnee qui vient d'un formulaire ou d'un import JSON (nom,
+// telephone, fonction, libelle, notes, observations, nom de liste...) DOIT
+// passer par esc() avant d'etre inseree dans un template `...${xxx}...`
+// utilise avec innerHTML OU dans une fenetre d'impression
+// (writePrintableDocument, qui utilise document.write — c'est du DOM en
+// direct, encore plus sensible qu'un simple innerHTML).
+//
+// Sans ca, si quelqu'un tape comme nom "<img src=x onerror=alert(1)>"
+// (dans le formulaire d'ajout de membre, ou via un fichier de sauvegarde
+// JSON trafique), ce code s'executerait directement des que le nom
+// s'affiche n'importe ou dans l'app. C'est une faille XSS stockee.
+//
+// Regle : `${maVariable}` dans un template qui finit dans innerHTML ->
+// si maVariable vient d'un utilisateur (formulaire, import JSON), utiliser
+// `${esc(maVariable)}`. Si c'est un nombre/une date deja formatee par
+// fmt()/fmtDate(), pas besoin, ce n'est pas du texte libre.
+const esc = (s) => String(s === null || s === undefined ? "" : s).replace(
+  /[&<>"']/g,
+  (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]
+);
+
 // --- Listes deroulantes reutilisables (date d'anniversaire + fonction) ---
 function dayOptionsHTML(selected) {
   let out = `<option value="">--</option>`;
@@ -281,9 +305,9 @@ async function runGlobalSearch(qRaw, box) {
   }
   const section = (title, items) => items.length ? `<div class="gsr-title">${title}</div>${items}` : "";
   box.innerHTML =
-    section("Membres", matchMembres.map((m) => `<div class="gsr-item" data-go="membre" data-id="${m.id}"><span class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(m)}</span>${fullName(m)}</div>`).join("")) +
-    section("Listes", matchListes.map((l) => `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 14)}</span>${l.nom}</div>`).join("")) +
-    section("Cotisations", matchCotis.map((j) => `<div class="gsr-item" data-go="dimanche" data-id="${j.dimanche.id}">${fmtDate(j.dimanche.date)} — ${j.beneficiaires.join(", ") || "Collecte"}</div>`).join(""));
+    section("Membres", matchMembres.map((m) => `<div class="gsr-item" data-go="membre" data-id="${m.id}"><span class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(m)}</span>${esc(fullName(m))}</div>`).join("")) +
+    section("Listes", matchListes.map((l) => `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 14)}</span>${esc(l.nom)}</div>`).join("")) +
+    section("Cotisations", matchCotis.map((j) => `<div class="gsr-item" data-go="dimanche" data-id="${j.dimanche.id}">${fmtDate(j.dimanche.date)} — ${esc(j.beneficiaires.join(", ")) || "Collecte"}</div>`).join(""));
   box.classList.add("show");
   box.querySelectorAll("[data-go]").forEach((el) => el.addEventListener("click", () => {
     box.innerHTML = ""; box.classList.remove("show");
@@ -363,7 +387,7 @@ async function renderAccueil() {
     const diff = bdayIso !== dimIso;
     return `<div class="row" data-id="${x.membre.id}">
       <div class="avatar">${initials(x.membre)}</div>
-      <div class="info"><div class="name">${fullName(x.membre)}</div>
+      <div class="info"><div class="name">${esc(fullName(x.membre))}</div>
         <div class="meta">Anniversaire le ${fmtDate(bdayIso)}${diff ? ` &middot; cotisation le dimanche ${fmtDate(dimIso)}` : " &middot; tombe un dimanche"}</div>
       </div>
       <span class="badge badge-yes">12 000 F</span>
@@ -374,7 +398,7 @@ async function renderAccueil() {
   document.getElementById("moisBox").innerHTML = membresMois.map((m) => `
     <div class="row" data-id="${m.id}">
       <div class="avatar" style="background:var(--bg-warning);color:var(--warning);">${initials(m)}</div>
-      <div class="info"><div class="name">${fullName(m)}</div><div class="meta">${String(m.jour_anniversaire).padStart(2,"0")}/${String(m.mois_anniversaire).padStart(2,"0")}</div></div>
+      <div class="info"><div class="name">${esc(fullName(m))}</div><div class="meta">${String(m.jour_anniversaire).padStart(2,"0")}/${String(m.mois_anniversaire).padStart(2,"0")}</div></div>
     </div>`).join("") || emptyHTML("Aucun anniversaire restant ce mois-ci.");
   document.querySelectorAll("#moisBox .row").forEach((el) => el.addEventListener("click", () => openMemberDetail(el.dataset.id)));
 
@@ -413,8 +437,8 @@ if (window.visualViewport) window.visualViewport.addEventListener("resize", onVi
 function weekCardDetailedHTML(j, memById) {
   const tagClass = j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
   const tagText = j.solde > 0 ? `+ ${fmt(j.solde)} pour la caisse` : j.solde < 0 ? `Manque ${fmt(Math.abs(j.solde))}` : "Montant exact";
-  const who = j.beneficiaires.length ? j.beneficiaires.join(", ") : "Aucun anniversaire cette semaine";
-  const nonPayeurs = j.paiements.filter((p) => !p.a_paye).map((p) => memById[p.id_membre] ? fullName(memById[p.id_membre]) : "?");
+  const who = j.beneficiaires.length ? esc(j.beneficiaires.join(", ")) : "Aucun anniversaire cette semaine";
+  const nonPayeurs = j.paiements.filter((p) => !p.a_paye).map((p) => memById[p.id_membre] ? esc(fullName(memById[p.id_membre])) : "?");
   return `<div class="week-card" data-dimanche="${j.dimanche.id}">
     <div class="top"><span class="date">${fmtDate(j.dimanche.date)}</span><span class="amount">${fmt(j.totalCollecte)}</span></div>
     <div class="desc">${who}</div>
@@ -527,7 +551,7 @@ function cssVar(name) { return getComputedStyle(document.documentElement).getPro
 function weekCardHTML(j) {
   const tagClass = j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
   const tagText = j.solde > 0 ? `+ ${fmt(j.solde)} pour la caisse` : j.solde < 0 ? `Manque ${fmt(Math.abs(j.solde))}` : "Montant exact";
-  const who = j.beneficiaires.length ? j.beneficiaires.join(", ") : "Aucun anniversaire cette semaine";
+  const who = j.beneficiaires.length ? esc(j.beneficiaires.join(", ")) : "Aucun anniversaire cette semaine";
   return `<div class="week-card" data-dimanche="${j.dimanche.id}">
     <div class="top"><span class="date">${fmtDate(j.dimanche.date)}</span><span class="amount">${fmt(j.totalCollecte)}</span></div>
     <div class="desc">${who} &middot; ${j.nbPayants}/${j.nbTotal} ont cotise &middot; ${fmt(j.montantAttendu)}/membre</div>
@@ -550,7 +574,7 @@ let memberFilterStatut = "";
 function memberFiltersActive() { return !!(memberFilterFonction || memberFilterMois || memberFilterStatut) || memberSort !== "alpha"; }
 async function renderMembres() {
   app.innerHTML = `
-    <input class="search" id="memberSearch" placeholder="Rechercher un membre..." value="${memberQuery}">
+    <input class="search" id="memberSearch" placeholder="Rechercher un membre..." value="${esc(memberQuery)}">
     <div class="row" style="border:none;padding:0 4px 12px;justify-content:flex-start;gap:8px;">
       <button class="btn-chip ${memberFiltersActive() ? "active" : ""}" id="memberFiltersBtn">Filtrer &amp; trier${memberFiltersActive() ? " ●" : ""}</button>
     </div>
@@ -613,8 +637,8 @@ async function renderMemberList() {
   box.innerHTML = list.map((m) => `
     <div class="row" data-id="${m.id}">
       <div class="avatar" style="${m.statut === "Inactif" ? "opacity:.45" : ""}">${initials(m)}</div>
-      <div class="info"><div class="name">${fullName(m)}</div>
-      <div class="meta">${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2, "0") + "/" + String(m.mois_anniversaire).padStart(2, "0") : "Date inconnue"} &middot; ${m.fonction || "Membre"}</div></div>
+      <div class="info"><div class="name">${esc(fullName(m))}</div>
+      <div class="meta">${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2, "0") + "/" + String(m.mois_anniversaire).padStart(2, "0") : "Date inconnue"} &middot; ${esc(m.fonction || "Membre")}</div></div>
       <span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span>
     </div>`).join("") || emptyHTML("Aucun membre trouve.");
   box.querySelectorAll(".row").forEach((el) => el.addEventListener("click", () => openMemberDetail(el.dataset.id)));
@@ -627,11 +651,11 @@ async function openMemberDetail(id) {
   const part = await isParticipant(id, sessionId);
   openSheet(`
     <button class="sheet-close" data-close>&times;</button>
-    <h3>${fullName(m)}</h3>
-    <div class="small-note" style="margin-bottom:10px;">${m.id}${m.observations ? " &middot; " + m.observations : ""}</div>
+    <h3>${esc(fullName(m))}</h3>
+    <div class="small-note" style="margin-bottom:10px;">${m.id}${m.observations ? " &middot; " + esc(m.observations) : ""}</div>
     <div class="detail-row"><span class="k">Anniversaire</span><span class="v">${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2, "0") + "/" + String(m.mois_anniversaire).padStart(2, "0") : "Inconnue"}</span></div>
-    <div class="detail-row"><span class="k">Telephone</span><span class="v">${m.telephone || "—"}</span></div>
-    <div class="detail-row"><span class="k">Fonction</span><span class="v">${m.fonction}</span></div>
+    <div class="detail-row"><span class="k">Telephone</span><span class="v">${esc(m.telephone || "—")}</span></div>
+    <div class="detail-row"><span class="k">Fonction</span><span class="v">${esc(m.fonction)}</span></div>
     <div class="detail-row"><span class="k">Cotisation hebdo.</span><span class="v">${m.cotisation_personnalisee ? fmt(m.cotisation_personnalisee) + " (personnalisee)" : "Montant par defaut"}</span></div>
     <div class="detail-row"><span class="k">Statut</span><span class="v">${m.statut}</span></div>
     <div class="detail-row"><span class="k">Participe (session active)</span><span class="v">${part ? "Oui" : "Non"}</span></div>
@@ -655,10 +679,10 @@ async function openMemberDetail(id) {
 function openEditMember(m) {
   openSheet(`
     <button class="sheet-close" data-close>&times;</button>
-    <h3>Modifier ${fullName(m)}</h3>
+    <h3>Modifier ${esc(fullName(m))}</h3>
     <div class="field"><label>Fonction</label><select id="em_fonction_select">${fonctionOptionsHTML(m.fonction || "Membre")}</select></div>
     <div class="field" id="em_fonction_autre_wrap" style="display:none;"><label>Preciser la fonction</label><input id="em_fonction_autre" type="text" placeholder="Ex: Responsable des enfants"></div>
-    <div class="field"><label>Telephone</label><input id="em_tel" type="tel" value="${m.telephone || ""}"></div>
+    <div class="field"><label>Telephone</label><input id="em_tel" type="tel" value="${esc(m.telephone || "")}"></div>
     <div class="field"><label>Cotisation hebdomadaire personnalisee (FCFA)</label><input id="em_cotis" type="number" placeholder="Laisser vide = montant par defaut" value="${m.cotisation_personnalisee || ""}"></div>
     <div class="small-note">Ex. le President cotise 1000 F au lieu des 500 F habituels : indique 1000 ici pour lui.</div>
     <button class="btn btn-primary" id="em_save" style="margin-top:14px;">Enregistrer</button>
@@ -746,7 +770,7 @@ async function openNewSunday() {
     <div class="field"><label>Date</label><input id="nd_date" type="date" value="${initialDate}"></div>
     <div class="field"><label>Anniversaire(s) ce dimanche</label>
       <select id="nd_benef" multiple size="5">
-        ${membres.map((m) => `<option value="${m.id}" ${suggestedIds.has(m.id) ? "selected" : ""}>${fullName(m)}</option>`).join("")}
+        ${membres.map((m) => `<option value="${m.id}" ${suggestedIds.has(m.id) ? "selected" : ""}>${esc(fullName(m))}</option>`).join("")}
       </select>
     </div>
     <div class="small-note" id="nd_hint">${suggested.length ? `Detecte automatiquement : ${suggested.map(fullName).join(", ")}. Modifie la selection si besoin (Ctrl/Cmd + clic).` : "Aucun anniversaire detecte automatiquement pour cette date. Selectionne manuellement si besoin."}</div>
@@ -777,7 +801,7 @@ async function openWeekDetail(dimId) {
   const anniv = await db.anniversaires_du_jour.where("id_dimanche").equals(dimId).toArray();
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const benefNames = anniv.map((a) => memById[a.id_membre_fete] ? fullName(memById[a.id_membre_fete]) : "?").join(", ") || "Collecte normale";
+  const benefNames = anniv.map((a) => memById[a.id_membre_fete] ? esc(fullName(memById[a.id_membre_fete])) : "?").join(", ") || "Collecte normale";
   const total = paiements.reduce((a, p) => a + p.montant_paye, 0);
   const montantAttendu = paiements[0] ? paiements[0].montant_attendu : 0;
 
@@ -787,7 +811,7 @@ async function openWeekDetail(dimId) {
     .map((p) => {
       const m = memById[p.id_membre] || { nom: "?", prenom: "" };
       return `<div class="chip-row" data-paiement="${p.id}">
-        <span class="name">${fullName(m)}</span>
+        <span class="name">${esc(fullName(m))}</span>
         <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${p.a_paye ? "Paye" : "Non paye"}</button>
       </div>`;
     }).join("");
@@ -866,7 +890,7 @@ async function renderDettes() {
   const rowHTML = (d, actionable) => `
     <div class="row" ${actionable ? `data-paiement="${d.id_paiement}"` : ""}>
       <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${(d.membre[0] || "?").toUpperCase()}</div>
-      <div class="info"><div class="name">${d.membre}</div><div class="meta">${fmtDate(d.date)}</div></div>
+      <div class="info"><div class="name">${esc(d.membre)}</div><div class="meta">${fmtDate(d.date)}</div></div>
       <span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>
     </div>`;
   document.getElementById("dettesImpayees").innerHTML = impayees.map((d) => rowHTML(d, true)).join("") || emptyHTML("Aucune dette en cours.");
@@ -921,7 +945,7 @@ async function renderListes() {
   app.innerHTML = `
     <button class="btn-chip" id="listesBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
     <div class="section-title" style="margin-top:0;"><h2>Mes listes</h2></div>
-    <input class="search" id="listesSearch" placeholder="Rechercher une liste..." value="${listesQuery}">
+    <input class="search" id="listesSearch" placeholder="Rechercher une liste..." value="${esc(listesQuery)}">
     <div class="row" style="border:none;padding:6px 4px 12px;justify-content:flex-start;gap:8px;">
       <button class="btn-chip ${!listesShowArchivees ? "active" : ""}" id="lst_filtre_actives">Actives</button>
       <button class="btn-chip ${listesShowArchivees ? "active" : ""}" id="lst_filtre_archivees">Archivees</button>
@@ -949,9 +973,9 @@ async function renderListesList() {
     return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${l.couleur};">
       <div class="liste-card-top">
         <span class="liste-icon" style="background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone)}</span>
-        <div class="info"><div class="name">${l.nom}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}</div></div>
+        <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}</div></div>
       </div>
-      ${l.description ? `<div class="small-note" style="margin-top:6px;">${l.description}</div>` : ""}
+      ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
     </div>`;
   }));
   box.innerHTML = cardsHtml.join("");
@@ -1014,17 +1038,17 @@ async function renderListeDetailSheet(id) {
     <button class="sheet-close" data-close>&times;</button>
     <div class="liste-detail-head" style="border-left:4px solid ${l.couleur};padding-left:12px;">
       <span class="liste-icon" style="background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 22)}</span>
-      <div><h3 style="margin:0;">${l.nom}</h3><div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.archivee ? " &middot; Archivee" : ""}</div></div>
+      <div><h3 style="margin:0;">${esc(l.nom)}</h3><div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.archivee ? " &middot; Archivee" : ""}</div></div>
     </div>
-    ${l.description ? `<p class="small-note">${l.description}</p>` : ""}
+    ${l.description ? `<p class="small-note">${esc(l.description)}</p>` : ""}
     <div class="detail-row"><span class="k">Membres inscrits</span><span class="v">${membres.length}</span></div>
     <div class="detail-row"><span class="k">Presents</span><span class="v">${presents}</span></div>
     <div class="detail-row"><span class="k">Absents</span><span class="v">${absents}</span></div>
     ${l.montant_demande ? `<div class="detail-row"><span class="k">Montant demande</span><span class="v">${fmt(l.montant_demande)}</span></div>` : ""}
-    ${l.notes ? `<div class="detail-row"><span class="k">Notes</span><span class="v">${l.notes}</span></div>` : ""}
+    ${l.notes ? `<div class="detail-row"><span class="k">Notes</span><span class="v">${esc(l.notes)}</span></div>` : ""}
 
     <div class="section-title" style="margin-top:16px;"><h2>Membres de la liste</h2></div>
-    <input class="search" id="ld_search" placeholder="Rechercher / ajouter un membre..." value="${listeDetailQuery}">
+    <input class="search" id="ld_search" placeholder="Rechercher / ajouter un membre..." value="${esc(listeDetailQuery)}">
     <div class="row" style="border:none;padding:6px 4px;justify-content:flex-start;gap:8px;">
       <button class="btn-chip ${listeDetailSort === "alpha" ? "active" : ""}" id="ld_sort_alpha">A-Z</button>
       <button class="btn-chip ${listeDetailSort === "presence" ? "active" : ""}" id="ld_sort_presence">Presence</button>
@@ -1099,7 +1123,7 @@ async function refreshListeDetailBody(id) {
       ? `<div class="small-note" style="margin:4px 0;">Ajouter a la liste :</div>` + candidats.map((m) => `
         <div class="row" data-add="${m.id}" style="cursor:pointer;">
           <div class="avatar">${initials(m)}</div>
-          <div class="info"><div class="name">${fullName(m)}</div></div>
+          <div class="info"><div class="name">${esc(fullName(m))}</div></div>
           <span class="badge badge-yes">+ Ajouter</span>
         </div>`).join("")
       : "";
@@ -1122,7 +1146,7 @@ async function refreshListeDetailBody(id) {
   const membersBox = ov.querySelector("#ld_members");
   membersBox.innerHTML = shown.length ? shown.map((m) => `
     <div class="chip-row" data-membre="${m.id}">
-      <span class="name">${fullName(m)}</span>
+      <span class="name">${esc(fullName(m))}</span>
       <button class="toggle ${m.presence === "present" ? "on" : m.presence === "absent" ? "off" : "wait"}" data-presence="${m.id}">${m.presence === "present" ? "Present" : m.presence === "absent" ? "Absent" : "En attente"}</button>
       <button class="chip-remove" data-remove="${m.id}" aria-label="Retirer">&times;</button>
     </div>`).join("") : emptyHTML(q ? "Aucun membre inscrit ne correspond." : "Aucun membre inscrit. Utilise la recherche ci-dessus pour en ajouter.");
@@ -1146,10 +1170,10 @@ async function exportListePDF(id) {
   const l = await db.listes.get(id);
   const membres = await membresDeListe(id);
   const presenceLabel = { present: "Present", absent: "Absent", attente: "En attente" };
-  const rows = membres.map((m) => `<tr><td>${m.nom || ""}</td><td>${m.prenom || ""}</td><td>${m.telephone || "—"}</td><td>${presenceLabel[m.presence]}</td></tr>`).join("");
+  const rows = membres.map((m) => `<tr><td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td><td>${presenceLabel[m.presence]}</td></tr>`).join("");
   const body = `
-    <h1>${l.nom}</h1>
-    <div class="meta">${fmtDate(l.date)}${l.description ? " &middot; " + l.description : ""}</div>
+    <h1>${esc(l.nom)}</h1>
+    <div class="meta">${fmtDate(l.date)}${l.description ? " &middot; " + esc(l.description) : ""}</div>
     <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Presence</th></tr>${rows || `<tr><td colspan="4">Aucun membre inscrit</td></tr>`}</table>
     <h2>Recapitulatif</h2>
     <table>
@@ -1159,7 +1183,7 @@ async function exportListePDF(id) {
       ${l.montant_demande ? `<tr><th>Montant demande (par personne)</th><td>${fmt(l.montant_demande)}</td></tr>` : ""}
       <tr><th>Date d'impression</th><td>${fmtDate(todayISO())}</td></tr>
     </table>
-    ${l.notes ? `<h2>Notes</h2><p>${l.notes}</p>` : ""}
+    ${l.notes ? `<h2>Notes</h2><p>${esc(l.notes)}</p>` : ""}
   `;
   if (win) writePrintableDocument(win, l.nom, body);
 }
@@ -1264,15 +1288,15 @@ async function renderPlus() {
     <div class="card" style="margin-bottom:24px;border-color:var(--danger);">
       <button class="btn btn-ghost" id="resetAnnivBtn" style="margin-bottom:10px;color:var(--danger);">Supprimer tous les anniversaires</button>
       <div class="small-note" style="margin-bottom:16px;">Efface la date d'anniversaire de tous les membres (a recommencer a zero). Les membres eux-memes ne sont pas supprimes : nom, telephone, statut, fonction, etc. restent intacts.</div>
-      <button class="btn btn-ghost" id="resetCotisBtn" style="color:var(--danger);">Reinitialiser toutes les cotisations</button>
-      <div class="small-note">Supprime tous les dimanches, paiements, cadeaux verses et remboursements pour repartir de zero. Les membres et leurs anniversaires ne sont pas touches.</div>
+      <button class="btn btn-ghost" id="resetCotisBtn" style="color:var(--danger);">Reinitialiser cotisations, dettes et caisse</button>
+      <div class="small-note">Remet a zero les paiements, les dettes et les mouvements de caisse. Les dimanches deja crees (dates, anniversaires fetes ce jour-la) restent visibles, ainsi que les membres.</div>
     </div>
   `;
 
   document.getElementById("mouvList").innerHTML = manuels.map((m) => `
     <div class="row">
       <div class="avatar" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}</div>
-      <div class="info"><div class="name">${m.libelle}</div><div class="meta">${fmtDate(m.date)}</div></div>
+      <div class="info"><div class="name">${esc(m.libelle)}</div><div class="meta">${fmtDate(m.date)}</div></div>
       <span class="badge" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}${fmt(m.montant)}</span>
     </div>`).join("") || emptyHTML("Aucun mouvement manuel.");
 
@@ -1300,7 +1324,7 @@ async function renderPlus() {
     showTab("plus");
   });
   document.getElementById("resetCotisBtn").addEventListener("click", async () => {
-    const ok = await confirmWithPassword("Ceci va supprimer TOUS les dimanches, paiements, cadeaux verses et remboursements pour repartir a zero. Les membres ne sont JAMAIS touches par cette action. Confirme avec le mot de passe administrateur.");
+    const ok = await confirmWithPassword("Ceci va remettre a zero les paiements, les dettes et les mouvements de caisse. Les dimanches deja crees et les membres ne sont JAMAIS touches par cette action. Confirme avec le mot de passe administrateur.");
     if (!ok) return;
     const avant = await db.membres.count();
     await reinitialiserCotisations();
@@ -1354,8 +1378,8 @@ async function exportMembresPDF() {
   const win = openPrintableWindow();
   const membres = await listMembres();
   const rows = membres.map((m) => `<tr>
-    <td>${m.nom || ""}</td><td>${m.prenom || ""}</td><td>${m.telephone || "—"}</td>
-    <td>${m.fonction || "Membre"}</td>
+    <td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td>
+    <td>${esc(m.fonction || "Membre")}</td>
     <td>${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2,"0") + "/" + String(m.mois_anniversaire).padStart(2,"0") : "—"}</td>
     <td>${m.date_adhesion ? fmtDate(m.date_adhesion) : "—"}</td>
     <td>${m.statut}</td>
@@ -1378,17 +1402,17 @@ async function exportCotisationPDF(idDimanche) {
   const rows = j.paiements.map((p) => {
     const m = memById[p.id_membre];
     return `<tr>
-      <td>${m ? m.nom : "?"}</td><td>${m ? m.prenom : "?"}</td><td>${m ? (m.telephone || "—") : "—"}</td>
+      <td>${m ? esc(m.nom) : "?"}</td><td>${m ? esc(m.prenom) : "?"}</td><td>${m ? esc(m.telephone || "—") : "—"}</td>
       <td>${fmt(p.montant_paye)}</td><td>${p.a_paye ? fmtDate(j.dimanche.date) : "—"}</td>
       <td>${p.a_paye ? "Paye" : "Non paye"}</td>
     </tr>`;
   }).join("");
   const nonPayants = j.paiements.filter((p) => !p.a_paye).map((p) => memById[p.id_membre]).filter(Boolean);
   const listeNonPayants = nonPayants.length
-    ? `<ul>${nonPayants.map((m) => `<li>${fullName(m)}</li>`).join("")}</ul>`
+    ? `<ul>${nonPayants.map((m) => `<li>${esc(fullName(m))}</li>`).join("")}</ul>`
     : `<p>Tous les participants ont cotise.</p>`;
   const body = `
-    <h1>Cotisation anniversaire — ${j.beneficiaires.join(", ") || "—"}</h1>
+    <h1>Cotisation anniversaire — ${esc(j.beneficiaires.join(", ")) || "—"}</h1>
     <div class="meta">Dimanche du ${fmtDate(j.dimanche.date)}</div>
     <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Montant paye</th><th>Date du paiement</th><th>Statut</th></tr>${rows}</table>
     <h2>Recapitulatif</h2>
@@ -1412,9 +1436,9 @@ async function exportRapportPDF() {
   const r = await rapportStats();
   const fonctionsRows = Object.entries(r.parFonction).map(([f, n]) => `<tr><td>${f}</td><td>${n}</td></tr>`).join("");
   const moisRows = r.parMois.map((x) => `<tr><td>${x.mois}</td><td>${x.nb}</td></tr>`).join("");
-  const regRows = r.plusReguliers.map((x) => `<tr><td>${fullName(x.membre)}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux*100)}%</td></tr>`).join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
-  const absRows = r.absents.map((x) => `<tr><td>${fullName(x.membre)}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux*100)}%</td></tr>`).join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
-  const histRows = r.joursStats.slice(0, 20).map((j) => `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${j.beneficiaires.join(", ") || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`).join("");
+  const regRows = r.plusReguliers.map((x) => `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux*100)}%</td></tr>`).join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
+  const absRows = r.absents.map((x) => `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux*100)}%</td></tr>`).join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
+  const histRows = r.joursStats.slice(0, 20).map((j) => `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`).join("");
   const body = `
     <h1>Jeunesse M3D — Rapport general</h1>
     <div class="meta">Genere le ${fmtDate(r.genereLe)}</div>
@@ -1505,8 +1529,8 @@ async function exportRapportWord() {
   const dettes = (await dettesList()).filter((d) => d.statut === "Impayee");
   const style = `body{font-family:Calibri,Arial,sans-serif;color:#111827;} h1{color:#2563EB;font-size:20px;} h2{font-size:15px;margin-top:22px;border-bottom:1px solid #E5E7EB;padding-bottom:4px;} table{border-collapse:collapse;width:100%;margin-top:8px;} td,th{border:1px solid #D1D5DB;padding:6px 8px;font-size:12.5px;text-align:left;} th{background:#F3F4F6;}`;
   const kpiRows = `<table><tr><th>Membres</th><td>${membres.length}</td></tr><tr><th>Dimanches realises</th><td>${joursStats.length}</td></tr><tr><th>Solde caisse</th><td>${fmt(solde)}</td></tr><tr><th>Dettes impayees</th><td>${fmt(dettesTotal)}</td></tr></table>`;
-  const dettesRows = dettes.map((d) => `<tr><td>${d.membre}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`).join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
-  const semainesRows = joursStats.slice(0, 12).map((j) => `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${j.beneficiaires.join(", ") || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`).join("");
+  const dettesRows = dettes.map((d) => `<tr><td>${esc(d.membre)}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`).join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
+  const semainesRows = joursStats.slice(0, 12).map((j) => `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`).join("");
   const content = `
     <h1>Jeunesse M3D — Rapport de gestion</h1>
     <p>Genere le ${fmtDate(todayISO())}</p>
@@ -1578,13 +1602,22 @@ async function importBackup(e) {
       reader.readAsText(file);
     });
     const parsed = JSON.parse(text);
-    const tables = Object.keys(parsed.data || {});
+    if (!parsed || typeof parsed !== "object" || typeof parsed.data !== "object" || parsed.data === null) {
+      throw new Error("Structure de sauvegarde invalide.");
+    }
+    // Liste blanche : doit rester EXACTEMENT synchronisee avec les tables
+    // declarees dans db.js (db.version(3).stores({...})). A completer a
+    // chaque fois qu'une table est ajoutee au schema. Empeche un fichier
+    // trafique d'injecter des cles/tables inattendues dans la base.
+    const KNOWN_TABLES = ["membres", "sessions", "dimanches", "anniversaires_du_jour", "paiements", "remboursements", "caisse_mouvements", "parametres", "activity_log", "listes", "liste_membres"];
+    const tables = Object.keys(parsed.data).filter((t) => KNOWN_TABLES.indexOf(t) !== -1 && Array.isArray(parsed.data[t]));
+    if (tables.length === 0) throw new Error("Aucune table reconnue dans ce fichier.");
     await db.transaction("rw", tables.map((t) => db[t]), async () => {
       for (const t of tables) { await db[t].clear(); await db[t].bulkAdd(parsed.data[t]); }
     });
     toast("Sauvegarde importee"); showTab("accueil");
   } catch (err) {
-    toast("Fichier invalide", "error");
+    toast(`Fichier invalide : ${err.message || "erreur inconnue"}`, "error");
   }
   e.target.value = "";
 }

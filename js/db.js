@@ -131,10 +131,32 @@ async function listMembres({ actifsSeulement = false } = {}) {
 async function isParticipant(idMembre, idSession) {
   // Un membre est "participant" a une session s'il a au moins un paiement attendu
   // sur un dimanche de cette session (source de verite = Paiements, pas un flag redondant).
+  if (!idSession) return false; // aucune session active -> personne n'est encore "participant"
   const dims = await db.dimanches.where("id_session").equals(idSession).toArray();
   const dimIds = new Set(dims.map(d => d.id));
   const p = await db.paiements.where("id_membre").equals(idMembre).first();
   return p ? dimIds.has(p.id_dimanche) : false;
+}
+
+// getOrCreateSessionActive : renvoie toujours l'id d'une session VALIDE et
+// EXISTANTE. Si le parametre "session_active" est absent (ex. apres import
+// d'une sauvegarde qui ne contenait que les membres) ou pointe vers une
+// session qui n'existe plus, une nouvelle session est creee automatiquement.
+// Ceci evite les plantages Dexie (.equals(undefined)) partout ou une
+// session est necessaire. (Regression fixee une fois deja -- si l'accueil
+// replante avec une erreur Dexie liee a "id_session", verifier en premier
+// que cette fonction est toujours bien appelee au lieu de getParam direct.)
+async function getOrCreateSessionActive() {
+  const currentId = await getParam("session_active", null);
+  if (currentId) {
+    const exists = await db.sessions.get(currentId);
+    if (exists) return currentId;
+  }
+  const id = uid();
+  const annee = new Date().getFullYear();
+  await db.sessions.add({ id, nom: `${annee}-${annee + 1}`, date_debut: todayISO(), date_fin: null });
+  await setParam("session_active", id);
+  return id;
 }
 
 async function dettesList() {
@@ -318,13 +340,32 @@ async function supprimerTousLesAnniversairesMembres() {
 // collecte, les anniversaires-du-jour rattaches et les remboursements
 // associes, pour repartir de zero. Les membres et la session restent
 // intacts : seul l'historique des collectes est efface.
+// ------------------------------------------------------------------
+// Reinitialise les COTISATIONS, les DETTES et la CAISSE, mais garde la
+// LISTE DES COLLECTES (dimanches + qui a ete fete) intacte.
+//
+// IMPORTANT (lecon apprise) : une version anterieure de cette fonction
+// effacait aussi db.dimanches et db.anniversaires_du_jour, ce qui faisait
+// disparaitre completement les dates de collecte deja creees quand on
+// cliquait sur "Reinitialiser". Ce n'est PAS le comportement voulu : on
+// veut remettre les compteurs a zero, pas perdre l'historique des dates.
+//
+// Comportement actuel :
+//  - db.paiements.clear()         -> chaque dimanche repasse a 0/0 cotise
+//  - db.remboursements.clear()    -> les dettes redeviennent "impayees"
+//  - db.caisse_mouvements.clear() -> les mouvements manuels (dons, achats,
+//                                     etc.) sont remis a zero
+//  - db.dimanches               -> CONSERVE (les dates de collecte restent)
+//  - db.anniversaires_du_jour   -> CONSERVE (qui a ete fete chaque dimanche
+//                                     reste visible)
+//  - db.membres / db.sessions   -> jamais touches par cette fonction
+// ------------------------------------------------------------------
 async function reinitialiserCotisations() {
   const nbMembresAvant = await db.membres.count();
-  await db.transaction("rw", db.dimanches, db.paiements, db.anniversaires_du_jour, db.remboursements, async () => {
+  await db.transaction("rw", db.paiements, db.remboursements, db.caisse_mouvements, async () => {
     await db.remboursements.clear();
     await db.paiements.clear();
-    await db.anniversaires_du_jour.clear();
-    await db.dimanches.clear();
+    await db.caisse_mouvements.clear();
   });
   // Garde de securite : la table "membres" n'est meme pas incluse dans la
   // transaction ci-dessus (impossible d'y ecrire depuis ce bloc), mais on
@@ -333,7 +374,7 @@ async function reinitialiserCotisations() {
   if (nbMembresApres !== nbMembresAvant) {
     throw new Error(`Securite : le nombre de membres a change pendant la reinitialisation des cotisations (${nbMembresAvant} -> ${nbMembresApres}). Operation annulee, contacte le support.`);
   }
-  await log("cotisations", "reinitialisation_totale", `Toutes les cotisations, dimanches et anniversaires-du-jour ont ete supprimes (${nbMembresApres} membres conserves)`);
+  await log("cotisations", "reinitialisation_totale", `Cotisations, dettes et caisse remises a zero, dimanches conserves (${nbMembresApres} membres conserves)`);
 }
 
 async function marquerPaiement(idPaiement, aPaye) {
@@ -359,7 +400,7 @@ async function participantsDeLaSession(sessionId) {
 }
 
 async function nouveauDimanche({ date, beneficiaireIds }) {
-  const sessionId = await getParam("session_active");
+  const sessionId = await getOrCreateSessionActive();
   const montantBase = await getParam("montant_cotisation_defaut", 500);
   const cadeau = await getParam("montant_cadeau_defaut", 12000);
   const dimId = uid();
