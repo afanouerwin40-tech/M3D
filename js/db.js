@@ -1,52 +1,7 @@
-// ============================================================================
-// db.js — Toute la couche donnees de l'app (schema IndexedDB via Dexie,
-// donnees de depart, et toutes les requetes "calculees").
-// ============================================================================
-//
-// PRINCIPE DE BASE A NE JAMAIS OUBLIER :
-// "paiements" est la SEULE source de verite pour tout ce qui touche a
-// l'argent lie aux collectes du dimanche. Les DETTES et le solde de la
-// CAISSE ne sont JAMAIS stockes tels quels dans une table : ils sont
-// toujours RECALCULES a la volee a partir de "paiements" (voir dettesList,
-// totalDettesImpayees, caisseSolde, joursAvecStats plus bas). C'est ce
-// qu'on appelle de l'"event sourcing" simplifie : on stocke les
-// evenements (chaque paiement), pas les totaux — comme ca, il n'y a
-// jamais de risque que le solde affiche se desynchronise de la realite.
-// Si un jour on est tente d'ajouter un champ "solde" ou "dette_totale"
-// stocke quelque part pour "aller plus vite", NE PAS LE FAIRE : ca cree
-// deux sources de verite qui peuvent diverger silencieusement.
-//
-// STRUCTURE DES TABLES (voir db.version(3).stores(...) plus bas pour le
-// detail des index) :
-//   membres                : fiches des membres du groupe (nom, tel, etc.)
-//   sessions                : une "session" = une periode (ex: annee 2026-2027)
-//   dimanches                : chaque dimanche de collecte realise
-//   anniversaires_du_jour   : qui est fete a chaque dimanche + montant cadeau
-//   paiements                : qui doit payer combien pour chaque dimanche,
-//                              et s'il a effectivement paye (a_paye)
-//   remboursements           : trace qu'une dette (paiement impaye) a ete
-//                              remboursee plus tard
-//   caisse_mouvements        : entrees/sorties MANUELLES de caisse (dons,
-//                              achats...), independantes des collectes
-//   parametres                : cle/valeur generique (montant par defaut,
-//                              mot de passe admin hache, session active...)
-//   activity_log              : journal de toutes les actions (audit)
-//   listes / liste_membres    : module "Mes listes" (evenements/sorties
-//                              independants des cotisations d'anniversaire)
-//
-// MIGRATIONS DE SCHEMA (Dexie) :
-// Chaque fois qu'on modifie la structure des tables, on ajoute un NOUVEAU
-// db.version(N).stores({...}) plus bas, on NE MODIFIE JAMAIS une version
-// existante (ca casserait la mise a jour pour les gens qui ont deja des
-// donnees locales dans une version anterieure). Si une migration doit
-// aussi transformer des donnees existantes, on utilise .upgrade(async tx
-// => {...}) comme dans la version 2 ci-dessous.
-//
-// SECURITE : ce depot est PUBLIC sur GitHub (necessaire pour l'hebergement
-// gratuit via GitHub Pages). Ne JAMAIS coder en dur ici un vrai nom, une
-// vraie date de naissance ou toute autre donnee personnelle d'un membre —
-// voir seedIfEmpty() plus bas qui doit rester volontairement vide.
-// ============================================================================
+// db.js — Schema IndexedDB (Dexie) + donnees de depart + requetes derivees
+// Principe : Paiements est la seule source de verite pour l'argent lie aux
+// collectes. Dettes et le volet "collecte" de la Caisse ne sont JAMAIS
+// stockes : ils sont toujours recalcules a la volee depuis Paiements.
 
 const db = new Dexie("m3d_db");
 
@@ -62,49 +17,34 @@ db.version(1).stores({
   activity_log: "++seq, date, entite, action",
 });
 
-// Version 2 : ajout du support d'une cotisation hebdomadaire personnalisee
-// par membre (le President ou toute autre fonction peut cotiser un montant
-// different du montant par defaut). On ajoute le champ
+// Version 2 : correction — ATTIDZONOU Eric (M009, President) cotise 1000 F
+// au lieu du montant par defaut de 500 F. On ajoute le champ
 // cotisation_personnalisee sur le membre et on met a jour retroactivement
 // ses paiements deja enregistres pour refleter le bon montant.
-db.version(2)
-  .stores({
-    membres: "id, nom, prenom, statut, mois_anniversaire",
-    sessions: "id, nom",
-    dimanches: "id, id_session, date, statut",
-    anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
-    paiements: "id, id_dimanche, id_membre",
-    remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
-    caisse_mouvements: "id, date, type",
-    parametres: "cle",
-    activity_log: "++seq, date, entite, action",
-  })
-  .upgrade(async (tx) => {
-    const president = await tx.membres.get("M009");
-    if (president && president.cotisation_personnalisee) return; // deja migre
-    if (president) {
-      await tx.membres.update("M009", {
-        cotisation_personnalisee: 1000,
-        fonction: "President",
-      });
-      const paiements = await tx.paiements
-        .where("id_membre")
-        .equals("M009")
-        .toArray();
-      for (const p of paiements) {
-        const nbAnniv = await tx.anniversaires_du_jour
-          .where("id_dimanche")
-          .equals(p.id_dimanche)
-          .count();
-        const nb = Math.max(1, nbAnniv);
-        const nouveauMontant = 1000 * nb;
-        await tx.paiements.update(p.id, {
-          montant_attendu: nouveauMontant,
-          montant_paye: p.a_paye ? nouveauMontant : 0,
-        });
-      }
+db.version(2).stores({
+  membres: "id, nom, prenom, statut, mois_anniversaire",
+  sessions: "id, nom",
+  dimanches: "id, id_session, date, statut",
+  anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+  paiements: "id, id_dimanche, id_membre",
+  remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+  caisse_mouvements: "id, date, type",
+  parametres: "cle",
+  activity_log: "++seq, date, entite, action",
+}).upgrade(async (tx) => {
+  const eric = await tx.membres.get("M009");
+  if (eric && eric.cotisation_personnalisee) return; // deja migre
+  if (eric) {
+    await tx.membres.update("M009", { cotisation_personnalisee: 1000, fonction: "President" });
+    const paiements = await tx.paiements.where("id_membre").equals("M009").toArray();
+    for (const p of paiements) {
+      const nbAnniv = await tx.anniversaires_du_jour.where("id_dimanche").equals(p.id_dimanche).count();
+      const nb = Math.max(1, nbAnniv);
+      const nouveauMontant = 1000 * nb;
+      await tx.paiements.update(p.id, { montant_attendu: nouveauMontant, montant_paye: p.a_paye ? nouveauMontant : 0 });
     }
-  });
+  }
+});
 
 // Version 3 : ajout du module independant "Mes listes" (listes personnalisees
 // non liees aux cotisations d'anniversaire : sorties, reunions, camps...).
@@ -128,8 +68,7 @@ db.version(3).stores({
 // On utilise crypto.getRandomValues (supporte depuis Safari 6 / iOS 6.1)
 // avec un repli sur Math.random si crypto n'est pas du tout disponible.
 function uid() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID)
-    return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && crypto.randomUUID) return crypto.randomUUID();
   const bytes = new Uint8Array(16);
   if (typeof crypto !== "undefined" && crypto.getRandomValues) {
     crypto.getRandomValues(bytes);
@@ -138,38 +77,16 @@ function uid() {
   }
   bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
   bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
-    "",
-  );
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
+  return `${hex.slice(0,8)}-${hex.slice(8,12)}-${hex.slice(12,16)}-${hex.slice(16,20)}-${hex.slice(20)}`;
 }
 const todayISO = () => new Date().toISOString().slice(0, 10);
-const MOIS_NOMS = [
-  "Janvier",
-  "Fevrier",
-  "Mars",
-  "Avril",
-  "Mai",
-  "Juin",
-  "Juillet",
-  "Aout",
-  "Septembre",
-  "Octobre",
-  "Novembre",
-  "Decembre",
-];
+const MOIS_NOMS = ["Janvier","Fevrier","Mars","Avril","Mai","Juin","Juillet","Aout","Septembre","Octobre","Novembre","Decembre"];
 
 async function log(entite, action, detail) {
   try {
-    await db.activity_log.add({
-      date: new Date().toISOString(),
-      entite,
-      action,
-      detail: detail || "",
-    });
-  } catch (e) {
-    /* le log ne doit jamais bloquer une operation */
-  }
+    await db.activity_log.add({ date: new Date().toISOString(), entite, action, detail: detail || "" });
+  } catch (e) { /* le log ne doit jamais bloquer une operation */ }
 }
 
 // ---------------------------------------------------------------
@@ -185,23 +102,21 @@ async function setParam(cle, valeur) {
 }
 
 // ---------------------------------------------------------------
-// Seed — VOLONTAIREMENT VIDE.
-// Aucune donnee personnelle (nom, prenom, date de naissance, membres,
-// paiements...) ne doit etre codee en dur dans ce fichier : le depot
-// GitHub qui heberge cette app est public, et ce fichier y est visible
-// par n'importe qui. Toutes les vraies donnees sont a importer APRES
-// installation via Plus > Sauvegarde > Importer, a partir d'un fichier
-// JSON garde en local (jamais commit dans Git).
+// Seed — donnees deja validees (28 membres, session 2026-2027, 4 dimanches)
+// Ne s'execute qu'une seule fois (base vide).
 // ---------------------------------------------------------------
+// seedIfEmpty : n'insere PLUS aucune donnee reelle (noms, cotisations...).
+// Le code source publie sur GitHub ne doit jamais contenir d'informations
+// sur de vraies personnes. L'app demarre totalement vide ; toutes les
+// donnees sont ensuite importees localement via Plus > Sauvegarde > Import
+// JSON, ce qui ne touche jamais le depot GitHub.
 async function seedIfEmpty() {
   const count = await db.membres.count();
   if (count > 0) return;
-
-  const montantBase = 500;
-  const cadeau = 12000;
+  const montantBase = 500, cadeau = 12000;
   await setParam("montant_cotisation_defaut", montantBase);
   await setParam("montant_cadeau_defaut", cadeau);
-  await log("systeme", "seed", "Base initialisee vide (aucune donnee membre)");
+  await log("systeme", "premier_lancement", "Base de donnees initialisee, vide");
 }
 
 // ---------------------------------------------------------------
@@ -209,50 +124,36 @@ async function seedIfEmpty() {
 // ---------------------------------------------------------------
 async function listMembres({ actifsSeulement = false } = {}) {
   let all = await db.membres.toArray();
-  if (actifsSeulement) all = all.filter((m) => m.statut === "Actif");
+  if (actifsSeulement) all = all.filter(m => m.statut === "Actif");
   return all.sort((a, b) => (a.nom + a.prenom).localeCompare(b.nom + b.prenom));
 }
 
 async function isParticipant(idMembre, idSession) {
   // Un membre est "participant" a une session s'il a au moins un paiement attendu
   // sur un dimanche de cette session (source de verite = Paiements, pas un flag redondant).
-  const dims = await db.dimanches
-    .where("id_session")
-    .equals(idSession)
-    .toArray();
-  const dimIds = new Set(dims.map((d) => d.id));
+  const dims = await db.dimanches.where("id_session").equals(idSession).toArray();
+  const dimIds = new Set(dims.map(d => d.id));
   const p = await db.paiements.where("id_membre").equals(idMembre).first();
   return p ? dimIds.has(p.id_dimanche) : false;
 }
 
-// dettesList : liste de tous les paiements attendus mais non payes (a_paye =
-// false), avec le nom du membre et la date du dimanche deja resolus (pratique
-// pour l'affichage direct sans refaire de jointure cote UI). Une dette peut
-// avoir le statut "Remboursee" si un remboursement existe pour ce paiement
-// (voir table remboursements) : elle reste dans la liste pour l'historique,
-// mais n'est plus comptee dans totalDettesImpayees().
 async function dettesList() {
   const impayes = (await db.paiements.toArray()).filter((p) => !p.a_paye);
   const dims = await db.dimanches.toArray();
-  const dimById = Object.fromEntries(dims.map((d) => [d.id, d]));
+  const dimById = Object.fromEntries(dims.map(d => [d.id, d]));
   const remb = await db.remboursements.toArray();
-  const rembByPaiement = new Set(remb.map((r) => r.id_paiement_concerne));
+  const rembByPaiement = new Set(remb.map(r => r.id_paiement_concerne));
   const membres = await db.membres.toArray();
-  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const memById = Object.fromEntries(membres.map(m => [m.id, m]));
 
   const rows = [];
   for (const p of impayes) {
     const rembourse = rembByPaiement.has(p.id);
     const dim = dimById[p.id_dimanche];
     rows.push({
-      id_paiement: p.id,
-      id_membre: p.id_membre,
-      membre: memById[p.id_membre]
-        ? `${memById[p.id_membre].nom} ${memById[p.id_membre].prenom}`.trim()
-        : "?",
-      date: dim ? dim.date : "?",
-      montant: p.montant_attendu,
-      statut: rembourse ? "Remboursee" : "Impayee",
+      id_paiement: p.id, id_membre: p.id_membre,
+      membre: memById[p.id_membre] ? `${memById[p.id_membre].nom} ${memById[p.id_membre].prenom}`.trim() : "?",
+      date: dim ? dim.date : "?", montant: p.montant_attendu, statut: rembourse ? "Remboursee" : "Impayee",
     });
   }
   return rows.sort((a, b) => b.date.localeCompare(a.date));
@@ -260,112 +161,66 @@ async function dettesList() {
 
 async function totalDettesImpayees() {
   const rows = await dettesList();
-  return rows
-    .filter((r) => r.statut === "Impayee")
-    .reduce((a, r) => a + r.montant, 0);
+  return rows.filter(r => r.statut === "Impayee").reduce((a, r) => a + r.montant, 0);
 }
 
-// caisseSolde : calcule le solde de la caisse a la volee (jamais stocke).
-// Deux sources s'additionnent :
-//   1) les mouvements manuels (caisse_mouvements) : dons, achats, depenses
-//      saisis a la main dans l'app (module Plus > Mouvements de caisse).
-//   2) le solde "collectes" : pour chaque dimanche, (argent recu des
-//      membres) - (argent verse en cadeaux d'anniversaire ce jour-la).
-// Si ce calcul parait faux un jour, verifier d'abord que tous les
-// paiements/mouvements existent bien dans la base (rien ne doit etre
-// stocke comme "solde" directement, sinon les deux sources de verite
-// peuvent diverger).
 async function caisseSolde() {
-  // Solde = mouvements manuels (achats, depenses) + (paiements collectes - cadeaux verses)
+  const d = await caisseDetail();
+  return d.solde;
+}
+// caisseDetail : decompose le solde de la caisse en ses composantes, pour
+// que l'utilisateur comprenne d'ou vient le chiffre final. Les impayes ne
+// sont PAS inclus dans le solde (ils sont renvoyes separement, a titre
+// informatif uniquement).
+async function caisseDetail() {
   const manuels = await db.caisse_mouvements.toArray();
-  const soldeManuel = manuels.reduce(
-    (a, m) => a + (m.type === "Entree" ? m.montant : -m.montant),
-    0,
-  );
+  const entreesManuelles = manuels.filter(m => m.type === "Entree").reduce((a, m) => a + m.montant, 0);
+  const sortiesManuelles = manuels.filter(m => m.type === "Sortie").reduce((a, m) => a + m.montant, 0);
 
   const dimanches = await db.dimanches.toArray();
-  let soldeCollectes = 0;
+  let totalCollecte = 0, totalCadeauxVerses = 0;
   for (const dim of dimanches) {
-    const paiements = await db.paiements
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    const collecte = paiements.reduce((a, p) => a + p.montant_paye, 0);
-    const anniv = await db.anniversaires_du_jour
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    const cadeauxVerses = anniv.reduce((a, x) => a + x.montant_cadeau, 0);
-    soldeCollectes += collecte - cadeauxVerses;
+    const paiements = await db.paiements.where("id_dimanche").equals(dim.id).toArray();
+    totalCollecte += paiements.reduce((a, p) => a + p.montant_paye, 0);
+    const anniv = await db.anniversaires_du_jour.where("id_dimanche").equals(dim.id).toArray();
+    totalCadeauxVerses += anniv.reduce((a, x) => a + x.montant_cadeau, 0);
   }
-  return soldeManuel + soldeCollectes;
+
+  const dettesImpayees = await totalDettesImpayees();
+  const solde = entreesManuelles - sortiesManuelles + totalCollecte - totalCadeauxVerses;
+
+  return { totalCollecte, totalCadeauxVerses, entreesManuelles, sortiesManuelles, solde, dettesImpayees };
 }
 
-// joursAvecStats : pour CHAQUE dimanche de collecte, calcule toutes les
-// statistiques utiles a l'affichage (dashboard, recap, exports) :
-// qui a ete fete, combien ont paye, montant total collecte, montant
-// verse en cadeaux, solde du jour. Retourne du plus RECENT au plus
-// ANCIEN (out.reverse() a la fin) car c'est l'ordre attendu partout
-// dans l'app (dashboard affiche les derniers dimanches en premier).
 async function joursAvecStats() {
-  const dimanches = (await db.dimanches.toArray()).sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
+  const dimanches = (await db.dimanches.toArray()).sort((a, b) => a.date.localeCompare(b.date));
   const membres = await db.membres.toArray();
-  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const memById = Object.fromEntries(membres.map(m => [m.id, m]));
   const out = [];
   for (const dim of dimanches) {
-    const paiements = await db.paiements
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    const anniv = await db.anniversaires_du_jour
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
+    const paiements = await db.paiements.where("id_dimanche").equals(dim.id).toArray();
+    const anniv = await db.anniversaires_du_jour.where("id_dimanche").equals(dim.id).toArray();
     const totalCollecte = paiements.reduce((a, p) => a + p.montant_paye, 0);
     const giftNeeded = anniv.reduce((a, x) => a + x.montant_cadeau, 0);
     out.push({
       dimanche: dim,
-      beneficiaires: anniv.map((a) =>
-        memById[a.id_membre_fete]
-          ? `${memById[a.id_membre_fete].nom} ${memById[a.id_membre_fete].prenom}`.trim()
-          : "?",
-      ),
+      beneficiaires: anniv.map(a => memById[a.id_membre_fete] ? `${memById[a.id_membre_fete].nom} ${memById[a.id_membre_fete].prenom}`.trim() : "?"),
       nbAnniv: Math.max(1, anniv.length),
       montantAttendu: paiements[0] ? paiements[0].montant_attendu : 0,
-      nbPayants: paiements.filter((p) => p.a_paye).length,
+      nbPayants: paiements.filter(p => p.a_paye).length,
       nbTotal: paiements.length,
-      totalCollecte,
-      giftNeeded,
-      solde: totalCollecte - giftNeeded,
+      totalCollecte, giftNeeded, solde: totalCollecte - giftNeeded,
       paiements,
     });
   }
   return out.reverse();
 }
 
-// prochainAnniversaire : pour chaque membre ayant une date de naissance
-// renseignee, calcule sa PROCHAINE occurrence d'anniversaire (cette annee
-// si pas encore passee, sinon l'annee prochaine) et le dimanche de
-// collecte qui suivra (nextSunday). Trie du plus proche au plus lointain.
-// Sert a afficher "Prochains anniversaires" sur le tableau de bord.
 async function prochainAnniversaire() {
-  const membres = (await db.membres.toArray()).filter(
-    (m) => m.jour_anniversaire && m.mois_anniversaire,
-  );
-  const today = new Date();
-  const todayMid = new Date(
-    today.getFullYear(),
-    today.getMonth(),
-    today.getDate(),
-  );
-  const withDates = membres.map((m) => {
-    const bday = prochaineOccurrenceAnniversaire(
-      m.jour_anniversaire,
-      m.mois_anniversaire,
-      todayMid,
-    );
+  const membres = (await db.membres.toArray()).filter(m => m.jour_anniversaire && m.mois_anniversaire);
+  const today = new Date(); const todayMid = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const withDates = membres.map(m => {
+    const bday = prochaineOccurrenceAnniversaire(m.jour_anniversaire, m.mois_anniversaire, todayMid);
     const dimanche = nextSunday(bday);
     return { membre: m, bday, dimanche };
   });
@@ -389,44 +244,29 @@ function prochaineOccurrenceAnniversaire(jj, mm, fromDate) {
   return d;
 }
 function sameDate(a, b) {
-  return (
-    a.getFullYear() === b.getFullYear() &&
-    a.getMonth() === b.getMonth() &&
-    a.getDate() === b.getDate()
-  );
+  return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 }
-function isoToDate(iso) {
-  return new Date(iso + "T00:00:00");
-}
-function dateToIso(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
+function isoToDate(iso) { return new Date(iso + "T00:00:00"); }
+function dateToIso(d) { return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`; }
 
 // Pour un dimanche donne, quels membres devraient etre fetes ce jour-la
 // (leur anniversaire tombe entre le lundi precedent et ce dimanche inclus) ?
 async function membresAnniversaireCeDimanche(dimancheISO) {
   const target = isoToDate(dimancheISO);
-  const membres = (await db.membres.toArray()).filter(
-    (m) => m.jour_anniversaire && m.mois_anniversaire && m.statut === "Actif",
-  );
+  const membres = (await db.membres.toArray()).filter(m => m.jour_anniversaire && m.mois_anniversaire && m.statut === "Actif");
   const out = [];
   for (const m of membres) {
     for (const yearOffset of [0, -1, 1]) {
       const y = target.getFullYear() + yearOffset;
       const bday = new Date(y, m.mois_anniversaire - 1, m.jour_anniversaire);
-      if (sameDate(nextSunday(bday), target)) {
-        out.push(m);
-        break;
-      }
+      if (sameDate(nextSunday(bday), target)) { out.push(m); break; }
     }
   }
   return out;
 }
 
 async function membresAnniversaireCeMois(mois) {
-  const membres = (await db.membres.toArray()).filter(
-    (m) => m.mois_anniversaire === mois,
-  );
+  const membres = (await db.membres.toArray()).filter(m => m.mois_anniversaire === mois);
   return membres.sort((a, b) => a.jour_anniversaire - b.jour_anniversaire);
 }
 
@@ -443,24 +283,18 @@ async function membresAnniversaireCeMoisRestants(mois) {
   const dimanches = await db.dimanches.toArray();
   const dimIdsDuMoisPasses = new Set(
     dimanches
-      .filter((d) => {
+      .filter(d => {
         const dt = isoToDate(d.date);
-        return (
-          dt.getFullYear() === year &&
-          dt.getMonth() + 1 === mois &&
-          d.date <= todayIso
-        );
+        return dt.getFullYear() === year && (dt.getMonth() + 1) === mois && d.date <= todayIso;
       })
-      .map((d) => d.id),
+      .map(d => d.id)
   );
   if (dimIdsDuMoisPasses.size === 0) return membresMois;
   const anniv = await db.anniversaires_du_jour.toArray();
   const dejaFetesIds = new Set(
-    anniv
-      .filter((a) => dimIdsDuMoisPasses.has(a.id_dimanche))
-      .map((a) => a.id_membre_fete),
+    anniv.filter(a => dimIdsDuMoisPasses.has(a.id_dimanche)).map(a => a.id_membre_fete)
   );
-  return membresMois.filter((m) => !dejaFetesIds.has(m.id));
+  return membresMois.filter(m => !dejaFetesIds.has(m.id));
 }
 
 // ---------------------------------------------------------------
@@ -474,88 +308,43 @@ async function supprimerTousLesAnniversairesMembres() {
   const tous = await db.membres.toArray();
   await db.transaction("rw", db.membres, async () => {
     for (const m of tous) {
-      await db.membres.update(m.id, {
-        jour_anniversaire: null,
-        mois_anniversaire: null,
-      });
+      await db.membres.update(m.id, { jour_anniversaire: null, mois_anniversaire: null });
     }
   });
-  await log(
-    "anniversaires",
-    "suppression_totale",
-    `${tous.length} fiches membres remises a zero (anniversaire uniquement)`,
-  );
+  await log("anniversaires", "suppression_totale", `${tous.length} fiches membres remises a zero (anniversaire uniquement)`);
 }
 
-// ------------------------------------------------------------------
-// Reinitialise les COTISATIONS, les DETTES et la CAISSE, mais garde la
-// LISTE DES COLLECTES intacte.
-//
-// IMPORTANT (lecon apprise) : une version anterieure de cette fonction
-// effacait aussi db.dimanches et db.anniversaires_du_jour, ce qui faisait
-// disparaitre completement les dates de collecte deja creees quand on
-// cliquait sur "Reinitialiser". Ce n'est PAS le comportement voulu.
-//
-// Comportement actuel :
-//  - db.paiements.clear()         -> chaque dimanche repasse a 0/0 cotise
-//  - db.remboursements.clear()    -> les dettes redeviennent "impayees"
-//  - db.caisse_mouvements.clear() -> les mouvements manuels (dons, achats,
-//                                     etc.) sont remis a zero
-//  - db.dimanches            -> CONSERVE (les dates de collecte restent)
-//  - db.anniversaires_du_jour -> CONSERVE (qui a ete fete chaque dimanche
-//                                     reste visible)
-//  - db.membres / db.sessions -> jamais touches par cette fonction
-//
-// Si un jour on a besoin de repartir vraiment a zero (y compris les
-// dates de collecte elles-memes), il faudra une fonction SEPAREE et
-// clairement nommee (ex: supprimerToutHistoriqueCollectes()) pour ne
-// jamais confondre les deux actions.
-// ------------------------------------------------------------------
+// Supprime toutes les cotisations (paiements), tous les dimanches de
+// collecte, les anniversaires-du-jour rattaches et les remboursements
+// associes, pour repartir de zero. Les membres et la session restent
+// intacts : seul l'historique des collectes est efface.
 async function reinitialiserCotisations() {
-  await db.transaction(
-    "rw",
-    db.paiements,
-    db.remboursements,
-    db.caisse_mouvements,
-    async () => {
-      await db.remboursements.clear();
-      await db.paiements.clear();
-      await db.caisse_mouvements.clear();
-    },
-  );
-  await log(
-    "cotisations",
-    "reinitialisation_totale",
-    "Cotisations, dettes et caisse remises a zero (dimanches conserves)",
-  );
+  const nbMembresAvant = await db.membres.count();
+  await db.transaction("rw", db.dimanches, db.paiements, db.anniversaires_du_jour, db.remboursements, async () => {
+    await db.remboursements.clear();
+    await db.paiements.clear();
+    await db.anniversaires_du_jour.clear();
+    await db.dimanches.clear();
+  });
+  // Garde de securite : la table "membres" n'est meme pas incluse dans la
+  // transaction ci-dessus (impossible d'y ecrire depuis ce bloc), mais on
+  // verifie quand meme explicitement qu'aucun membre n'a disparu.
+  const nbMembresApres = await db.membres.count();
+  if (nbMembresApres !== nbMembresAvant) {
+    throw new Error(`Securite : le nombre de membres a change pendant la reinitialisation des cotisations (${nbMembresAvant} -> ${nbMembresApres}). Operation annulee, contacte le support.`);
+  }
+  await log("cotisations", "reinitialisation_totale", `Toutes les cotisations, dimanches et anniversaires-du-jour ont ete supprimes (${nbMembresApres} membres conserves)`);
 }
 
-// marquerPaiement : bascule un paiement individuel entre paye/non paye.
-// Si aPaye=true, montant_paye est aligne sur montant_attendu (paiement
-// integral suppose). Si on a besoin un jour d'accepter des paiements
-// PARTIELS, il faudra ajouter un parametre montant explicite ici plutot
-// que de deduire automatiquement montant_paye = montant_attendu.
 async function marquerPaiement(idPaiement, aPaye) {
   const p = await db.paiements.get(idPaiement);
   if (!p) return;
-  await db.paiements.update(idPaiement, {
-    a_paye: aPaye,
-    montant_paye: aPaye ? p.montant_attendu : 0,
-  });
+  await db.paiements.update(idPaiement, { a_paye: aPaye, montant_paye: aPaye ? p.montant_attendu : 0 });
   await log("paiement", aPaye ? "marque_paye" : "marque_non_paye", idPaiement);
 }
 
-// participantsDeLaSession : renvoie la liste des id_membre qui doivent
-// cotiser pour cette session. S'il n'y a pas encore de dimanche cree pour
-// cette session (tout premier dimanche a venir), on prend par defaut TOUS
-// les membres actifs. Sinon, on reprend la liste des membres qui avaient
-// deja un paiement sur le dimanche precedent (pour garder la meme liste
-// de participants d'un dimanche a l'autre, sauf ajustement manuel).
 async function participantsDeLaSession(sessionId) {
-  const dims = await db.dimanches
-    .where("id_session")
-    .equals(sessionId)
-    .toArray();
+  const dims = await db.dimanches.where("id_session").equals(sessionId).toArray();
   if (dims.length === 0) {
     // Premier dimanche de la session : pas encore de recensement -> tous les membres actifs
     const actifs = await db.membres.where("statut").equals("Actif").toArray();
@@ -569,33 +358,14 @@ async function participantsDeLaSession(sessionId) {
   return Array.from(ids);
 }
 
-// nouveauDimanche : cree un nouveau dimanche de collecte.
-// - Cree une ligne anniversaires_du_jour pour chaque membre fete
-//   (beneficiaireIds), avec le montant du cadeau par defaut.
-// - Cree un paiement "a_paye:false" pour chaque participant de la
-//   session, avec le montant attendu = (cotisation normale ou
-//   personnalisee du membre) x (nombre de personnes fetees ce jour,
-//   minimum 1). C'est ce facteur "nb" qui fait qu'on paie plus une
-//   semaine ou plusieurs personnes sont fetees le meme dimanche.
 async function nouveauDimanche({ date, beneficiaireIds }) {
   const sessionId = await getParam("session_active");
   const montantBase = await getParam("montant_cotisation_defaut", 500);
   const cadeau = await getParam("montant_cadeau_defaut", 12000);
   const dimId = uid();
-  await db.dimanches.add({
-    id: dimId,
-    id_session: sessionId,
-    date,
-    statut: "En cours",
-    archivee: false,
-  });
+  await db.dimanches.add({ id: dimId, id_session: sessionId, date, statut: "En cours", archivee: false });
   for (const bId of beneficiaireIds) {
-    await db.anniversaires_du_jour.add({
-      id: uid(),
-      id_dimanche: dimId,
-      id_membre_fete: bId,
-      montant_cadeau: cadeau,
-    });
+    await db.anniversaires_du_jour.add({ id: uid(), id_dimanche: dimId, id_membre_fete: bId, montant_cadeau: cadeau });
   }
   const nb = Math.max(1, beneficiaireIds.length);
   const participantIds = await participantsDeLaSession(sessionId);
@@ -603,14 +373,7 @@ async function nouveauDimanche({ date, beneficiaireIds }) {
     const membre = await db.membres.get(mId);
     const base = (membre && membre.cotisation_personnalisee) || montantBase;
     const montantAttendu = base * nb;
-    await db.paiements.add({
-      id: uid(),
-      id_dimanche: dimId,
-      id_membre: mId,
-      montant_attendu: montantAttendu,
-      a_paye: false,
-      montant_paye: 0,
-    });
+    await db.paiements.add({ id: uid(), id_dimanche: dimId, id_membre: mId, montant_attendu: montantAttendu, a_paye: false, montant_paye: 0 });
   }
   await log("dimanche", "cree", dimId);
   return dimId;
@@ -624,20 +387,10 @@ async function nouveauDimanche({ date, beneficiaireIds }) {
 // securite de niveau serveur : l'app etant 100% locale, elle n'a pas de
 // compte serveur ni de recuperation par email.
 // ---------------------------------------------------------------
-// ---------------------------------------------------------------
-// Mot de passe administrateur — jamais stocke en clair.
-// On stocke uniquement : un sel aleatoire (admin_salt) + le hash
-// SHA-256 de (sel + mot de passe) dans admin_hash. A la connexion, on
-// recalcule le hash avec le mot de passe saisi et on compare les deux
-// hash — le mot de passe original n'est jamais reconstituable a partir
-// de ce qui est stocke dans IndexedDB.
-// ---------------------------------------------------------------
 async function sha256Hex(str) {
   const enc = new TextEncoder().encode(str);
   const buf = await crypto.subtle.digest("SHA-256", enc);
-  return Array.from(new Uint8Array(buf))
-    .map((b) => b.toString(16).padStart(2, "0"))
-    .join("");
+  return Array.from(new Uint8Array(buf)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 async function isAdminConfigured() {
   const hash = await getParam("admin_hash", null);
@@ -658,17 +411,9 @@ async function verifyAdminPassword(pw) {
   return test === hash;
 }
 
-// supprimerDimanche : supprime un dimanche ET tout ce qui lui est
-// rattache (ses paiements, ses anniversaires_du_jour). A utiliser pour
-// corriger une erreur de saisie (mauvaise date, dimanche cree par
-// erreur) — PAS pour un reset global (voir reinitialiserCotisations
-// plus haut, qui garde les dimanches existants).
 async function supprimerDimanche(idDimanche) {
   await db.paiements.where("id_dimanche").equals(idDimanche).delete();
-  await db.anniversaires_du_jour
-    .where("id_dimanche")
-    .equals(idDimanche)
-    .delete();
+  await db.anniversaires_du_jour.where("id_dimanche").equals(idDimanche).delete();
   await db.dimanches.delete(idDimanche);
   await log("dimanche", "supprime", idDimanche);
 }
@@ -684,30 +429,12 @@ async function listesAll({ archiveesSeulement = null } = {}) {
   if (archiveesSeulement === false) all = all.filter((l) => !l.archivee);
   return all.sort((a, b) => (b.date || "").localeCompare(a.date || ""));
 }
-// creerListe : cree une nouvelle liste/evenement. couleur et icone ont
-// des valeurs par defaut si non fournies (bleu #2563EB, icone etoile)
-// pour que l'app ne plante jamais si l'appel omet ces champs.
-async function creerListe({
-  nom,
-  description,
-  date,
-  couleur,
-  icone,
-  montant_demande,
-  notes,
-}) {
+async function creerListe({ nom, description, date, couleur, icone, montant_demande, notes }) {
   const id = uid();
   await db.listes.add({
-    id,
-    nom: nom.trim(),
-    description: (description || "").trim(),
-    date: date || todayISO(),
-    couleur: couleur || "#2563EB",
-    icone: icone || "star",
-    montant_demande: montant_demande || null,
-    notes: (notes || "").trim(),
-    archivee: false,
-    date_creation: todayISO(),
+    id, nom: nom.trim(), description: (description || "").trim(), date: date || todayISO(),
+    couleur: couleur || "#2563EB", icone: icone || "star", montant_demande: montant_demande || null,
+    notes: (notes || "").trim(), archivee: false, date_creation: todayISO(),
   });
   await log("liste", "creee", id);
   return id;
@@ -725,29 +452,14 @@ async function archiverListe(id, archivee) {
   await db.listes.update(id, { archivee });
   await log("liste", archivee ? "archivee" : "desarchivee", id);
 }
-// dupliquerListe : copie une liste existante (nom, couleur, description...)
-// SANS les statuts de presence : tous les membres repartent a "attente"
-// dans la copie. Pratique pour reutiliser une liste d'un evenement
-// recurrent (ex: "Reunion mensuelle") sans repartir de zero a chaque fois.
 async function dupliquerListe(id) {
   const src = await db.listes.get(id);
   if (!src) return null;
   const newId = uid();
-  await db.listes.add({
-    ...src,
-    id: newId,
-    nom: src.nom + " (copie)",
-    archivee: false,
-    date_creation: todayISO(),
-  });
+  await db.listes.add({ ...src, id: newId, nom: src.nom + " (copie)", archivee: false, date_creation: todayISO() });
   const membres = await db.liste_membres.where("id_liste").equals(id).toArray();
   for (const lm of membres) {
-    await db.liste_membres.add({
-      id: uid(),
-      id_liste: newId,
-      id_membre: lm.id_membre,
-      presence: "attente",
-    });
+    await db.liste_membres.add({ id: uid(), id_liste: newId, id_membre: lm.id_membre, presence: "attente" });
   }
   await log("liste", "dupliquee", newId);
   return newId;
@@ -755,54 +467,26 @@ async function dupliquerListe(id) {
 // membresDeListe : renvoie les fiches membres inscrits a une liste, avec leur
 // statut de presence ("present" | "absent" | "attente") fusionne dans l'objet.
 async function membresDeListe(idListe) {
-  const inscriptions = await db.liste_membres
-    .where("id_liste")
-    .equals(idListe)
-    .toArray();
+  const inscriptions = await db.liste_membres.where("id_liste").equals(idListe).toArray();
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
   return inscriptions
-    .map((ins) =>
-      memById[ins.id_membre]
-        ? {
-            ...memById[ins.id_membre],
-            _inscriptionId: ins.id,
-            presence: ins.presence || "attente",
-          }
-        : null,
-    )
+    .map((ins) => memById[ins.id_membre] ? { ...memById[ins.id_membre], _inscriptionId: ins.id, presence: ins.presence || "attente" } : null)
     .filter(Boolean)
     .sort((a, b) => (a.nom + a.prenom).localeCompare(b.nom + b.prenom));
 }
 async function ajouterMembreListe(idListe, idMembre) {
-  const existe = await db.liste_membres
-    .where("id_liste")
-    .equals(idListe)
-    .and((x) => x.id_membre === idMembre)
-    .first();
+  const existe = await db.liste_membres.where("id_liste").equals(idListe).and((x) => x.id_membre === idMembre).first();
   if (existe) return;
-  await db.liste_membres.add({
-    id: uid(),
-    id_liste: idListe,
-    id_membre: idMembre,
-    presence: "attente",
-  });
+  await db.liste_membres.add({ id: uid(), id_liste: idListe, id_membre: idMembre, presence: "attente" });
   await log("liste", "membre_ajoute", `${idListe}:${idMembre}`);
 }
 async function retirerMembreListe(idListe, idMembre) {
-  await db.liste_membres
-    .where("id_liste")
-    .equals(idListe)
-    .and((x) => x.id_membre === idMembre)
-    .delete();
+  await db.liste_membres.where("id_liste").equals(idListe).and((x) => x.id_membre === idMembre).delete();
   await log("liste", "membre_retire", `${idListe}:${idMembre}`);
 }
 async function definirPresenceListe(idListe, idMembre, presence) {
-  const row = await db.liste_membres
-    .where("id_liste")
-    .equals(idListe)
-    .and((x) => x.id_membre === idMembre)
-    .first();
+  const row = await db.liste_membres.where("id_liste").equals(idListe).and((x) => x.id_membre === idMembre).first();
   if (!row) return;
   await db.liste_membres.update(row.id, { presence });
 }
@@ -812,44 +496,23 @@ async function definirPresenceListe(idListe, idMembre, presence) {
 // bord et les exports (PDF/Excel) du rapport complet. Rassemble ici pour
 // n'avoir cette logique ecrite qu'une seule fois.
 // ---------------------------------------------------------------
-// rapportStats : agrege TOUTES les statistiques utilisees par le
-// tableau de bord et le rapport PDF/Excel complet, en un seul appel.
-// Regroupe notamment :
-//  - repartition des membres par fonction et par mois de naissance
-//  - "regularite" : sur tous les dimanches ou un membre avait un
-//    paiement attendu, le ratio (fois payees / fois attendues). Sert a
-//    identifier les membres les plus assidus (plusReguliers) et ceux a
-//    relancer (absents). Seuil minimum de 2 dimanches pour apparaitre
-//    dans ces classements (evite de juger sur un seul dimanche).
-// Si on ajoute une nouvelle statistique au rapport, c'est ICI qu'il
-// faut l'ajouter, pas recalculer ailleurs dans app.js.
 async function rapportStats() {
   const [membres, joursStats, dettesTotal, solde, listes] = await Promise.all([
-    listMembres(),
-    joursAvecStats(),
-    totalDettesImpayees(),
-    caisseSolde(),
-    listesAll(),
+    listMembres(), joursAvecStats(), totalDettesImpayees(), caisseSolde(), listesAll(),
   ]);
   const totalCollecte = joursStats.reduce((a, j) => a + j.totalCollecte, 0);
   const totalDistribue = joursStats.reduce((a, j) => a + j.giftNeeded, 0);
 
   const parFonction = {};
-  membres.forEach((m) => {
-    const f = m.fonction || "Membre";
-    parFonction[f] = (parFonction[f] || 0) + 1;
-  });
+  membres.forEach((m) => { const f = m.fonction || "Membre"; parFonction[f] = (parFonction[f] || 0) + 1; });
 
   const parMois = MOIS_NOMS.map((nom, i) => ({
-    mois: nom,
-    nb: membres.filter((m) => m.mois_anniversaire === i + 1).length,
+    mois: nom, nb: membres.filter((m) => m.mois_anniversaire === i + 1).length,
   }));
 
   // Regularite : sur l'ensemble des dimanches, combien de fois chaque membre a paye / n'a pas paye.
   const compteur = {};
-  membres.forEach((m) => {
-    compteur[m.id] = { membre: m, paye: 0, total: 0 };
-  });
+  membres.forEach((m) => { compteur[m.id] = { membre: m, paye: 0, total: 0 }; });
   for (const j of joursStats) {
     for (const p of j.paiements) {
       if (!compteur[p.id_membre]) continue;
@@ -857,43 +520,23 @@ async function rapportStats() {
       if (p.a_paye) compteur[p.id_membre].paye++;
     }
   }
-  const regularite = Object.values(compteur)
-    .filter((c) => c.total > 0)
-    .map((c) => ({
-      membre: c.membre,
-      taux: c.paye / c.total,
-      paye: c.paye,
-      total: c.total,
-    }));
-  const plusReguliers = regularite
-    .filter((r) => r.total >= 2)
-    .sort((a, b) => b.taux - a.taux || b.total - a.total)
-    .slice(0, 10);
-  const absents = regularite
-    .filter((r) => r.total >= 2)
-    .sort((a, b) => a.taux - b.taux || b.total - a.total)
-    .slice(0, 10);
+  const regularite = Object.values(compteur).filter((c) => c.total > 0)
+    .map((c) => ({ membre: c.membre, taux: c.paye / c.total, paye: c.paye, total: c.total }));
+  const plusReguliers = regularite.filter((r) => r.total >= 2).sort((a, b) => b.taux - a.taux || b.total - a.total).slice(0, 10);
+  const absents = regularite.filter((r) => r.total >= 2).sort((a, b) => a.taux - b.taux || b.total - a.total).slice(0, 10);
 
   const tauxParticipationGlobal = joursStats.length
-    ? joursStats.reduce(
-        (a, j) => a + (j.nbTotal ? j.nbPayants / j.nbTotal : 0),
-        0,
-      ) / joursStats.length
+    ? joursStats.reduce((a, j) => a + (j.nbTotal ? j.nbPayants / j.nbTotal : 0), 0) / joursStats.length
     : 0;
 
   return {
     genereLe: todayISO(),
     totalMembres: membres.length,
-    parFonction,
-    parMois,
+    parFonction, parMois,
     nbDimanches: joursStats.length,
-    totalCollecte,
-    totalDistribue,
-    solde,
-    dettesTotal,
+    totalCollecte, totalDistribue, solde, dettesTotal,
     tauxParticipationGlobal,
-    plusReguliers,
-    absents,
+    plusReguliers, absents,
     joursStats,
     nbListes: listes.filter((l) => !l.archivee).length,
     nbListesArchivees: listes.filter((l) => l.archivee).length,
