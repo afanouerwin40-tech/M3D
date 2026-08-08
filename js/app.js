@@ -106,6 +106,66 @@ const app = document.getElementById("app-content");
 const TABS = ["accueil", "membres", "dimanche", "dettes", "plus"];
 let currentTab = "accueil";
 
+// ================================================================
+// downloadFile() — telechargement de fichier compatible iOS 12/13.
+// ================================================================
+// PROBLEME : Safari sur iOS 12 (comme sur l'iPad mini 2 de Godwin) NE
+// SUPPORTE PAS l'attribut `download` sur les liens <a>. Cet attribut n'a
+// ete ajoute qu'a partir d'iOS 13. Sans lui, un `a.click()` classique sur
+// un lien pointant vers un Blob (JSON de sauvegarde, fichier .xlsx, .doc)
+// ne declenche RIEN sur ces appareils : Safari ignore l'attribut et
+// n'ouvre meme pas le fichier. C'est ce qui donnait l'impression que
+// "l'exportation ne marche pas".
+//
+// SOLUTION : on detecte le support de `download` a l'exécution.
+//  - Si supporte (tous les navigateurs modernes, Android, desktop, iOS 13+)
+//    -> methode habituelle : lien invisible + click().
+//  - Si NON supporte (vieux Safari iOS) -> on convertit le Blob en Data URI
+//    (via FileReader, qui existe depuis toujours sur iOS) et on navigue
+//    l'onglet actuel vers cette URI. Safari reconnait alors le type de
+//    fichier (xlsx, doc, json/texte) et ouvre l'apercu integre
+//    (Quick Look) avec un bouton "Partager" permettant d'enregistrer dans
+//    l'app Fichiers, de l'envoyer par mail, AirDrop, etc.
+// Cette meme fonction est utilisee pour TOUS les exports (JSON, Excel,
+// Word) afin de garder un seul endroit a maintenir.
+function downloadFile(blob, filename) {
+  const supportsDownloadAttr = "download" in document.createElement("a");
+  if (supportsDownloadAttr) {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.style.display = "none";
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => {
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }, 1000);
+  } else {
+    // Repli vieux Safari (iOS 12) : Data URI + navigation dans l'onglet
+    // courant. L'utilisateur revient a l'app avec le bouton "Retour" de
+    // Safari (ou en balayant depuis le bord de l'ecran).
+    const reader = new FileReader();
+    reader.onload = () => {
+      window.location.href = reader.result;
+    };
+    reader.onerror = () =>
+      toast("Impossible de generer le fichier sur cet appareil", "error");
+    reader.readAsDataURL(blob);
+  }
+}
+// xlsxDownload() : genere le classeur en memoire (array binaire) puis passe
+// par downloadFile() au lieu de XLSX.writeFile(). XLSX.writeFile() utilise
+// en interne le meme genre de lien <a download> qui echoue sur iOS 12 —
+// en reprenant la main sur le telechargement, on beneficie du repli
+// Data URI pour ces appareils.
+function xlsxDownload(wb, filename) {
+  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([wbout], { type: "application/octet-stream" });
+  downloadFile(blob, filename);
+}
+
 // ---------------------------------------------------------------
 // Theme (exception : localStorage, lu de facon synchrone avant le
 // premier rendu pour eviter un flash du mauvais theme)
@@ -1903,7 +1963,7 @@ async function exportListeExcel(id) {
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, l.nom.slice(0, 28) || "Liste");
-  XLSX.writeFile(
+  xlsxDownload(
     wb,
     `m3d-liste-${(l.nom || "liste").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.xlsx`,
   );
@@ -2101,6 +2161,17 @@ async function renderPlus() {
 // toujours). La fenetre doit etre ouverte de facon SYNCHRONE des le clic
 // (avant tout await) pour ne pas etre bloquee par les bloqueurs de popup
 // de Safari.
+//
+// LIMITATION CONNUE SUR iOS (Safari mobile, y compris iOS 12) : contrairement
+// a Safari sur Mac, Safari sur iPhone/iPad n'implemente PAS window.print()
+// depuis une page web — le bouton "Imprimer / Enregistrer en PDF" ne fait
+// alors RIEN, sans erreur visible. C'est une limitation d'Apple, pas un bug
+// de l'app. Le contournement fiable sur iOS est le menu natif de Safari
+// (icone Partager, carre avec une fleche) -> "Imprimer" -> pincer l'apercu
+// avec deux doigts pour le transformer en PDF partageable. On affiche donc
+// une consigne explicite dans la fenetre exportee, visible uniquement sur
+// petit ecran tactile (via une media query grossiere sur pointer:coarse),
+// pour guider l'utilisateur si le bouton ne reagit pas.
 function openPrintableWindow() {
   const win = window.open("", "_blank");
   if (!win) {
@@ -2120,12 +2191,17 @@ function writePrintableDocument(win, title, bodyHtml) {
     .meta{color:#6B7280;font-size:12.5px;margin-bottom:14px;}
     .print-bar{margin-bottom:18px;}
     .print-bar button{font:inherit;padding:9px 16px;border-radius:8px;border:none;background:#2563EB;color:#fff;cursor:pointer;}
+    .print-ios-note{display:none;font-size:12.5px;color:#6B7280;margin-top:8px;line-height:1.5;}
+    @media (pointer:coarse) { .print-ios-note{display:block;} }
     @media print { .print-bar{display:none;} }
   `;
   win.document.open();
   win.document
     .write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>
-    <div class="print-bar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button></div>
+    <div class="print-bar">
+      <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
+      <div class="print-ios-note">Si rien ne se passe (frequent sur iPhone/iPad) : utilise le bouton Partager de Safari (le carre avec la fleche vers le haut), choisis "Imprimer", puis pince l'apercu avec deux doigts pour l'agrandir — cela le transforme en PDF que tu peux enregistrer ou partager.</div>
+    </div>
     ${bodyHtml}
   </body></html>`);
   win.document.close();
@@ -2332,7 +2408,7 @@ async function exportRapportExcel() {
     })),
   );
   XLSX.utils.book_append_sheet(wb, wsHist, "Historique");
-  XLSX.writeFile(wb, `m3d-rapport-${todayISO()}.xlsx`);
+  xlsxDownload(wb, `m3d-rapport-${todayISO()}.xlsx`);
   toast("Rapport Excel telecharge");
 }
 async function exportMembresExcel() {
@@ -2370,7 +2446,7 @@ async function exportMembresExcel() {
   ];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Membres");
-  XLSX.writeFile(wb, `m3d-membres-${todayISO()}.xlsx`);
+  xlsxDownload(wb, `m3d-membres-${todayISO()}.xlsx`);
   toast("Fichier Excel telecharge");
 }
 async function exportDettesExcel() {
@@ -2389,7 +2465,7 @@ async function exportDettesExcel() {
   ws["!cols"] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, "Dettes");
-  XLSX.writeFile(wb, `m3d-dettes-${todayISO()}.xlsx`);
+  xlsxDownload(wb, `m3d-dettes-${todayISO()}.xlsx`);
   toast("Fichier Excel telecharge");
 }
 async function exportRapportWord() {
@@ -2430,12 +2506,7 @@ async function exportRapportWord() {
   const blob = new Blob(["\ufeff", header + content + footer], {
     type: "application/msword",
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `m3d-rapport-${todayISO()}.doc`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadFile(blob, `m3d-rapport-${todayISO()}.doc`);
   toast("Rapport Word telecharge");
 }
 function openAddMouvement() {
@@ -2500,12 +2571,7 @@ async function exportBackup() {
     ],
     { type: "application/json" },
   );
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `m3d-sauvegarde-${todayISO()}.json`;
-  a.click();
-  URL.revokeObjectURL(url);
+  downloadFile(blob, `m3d-sauvegarde-${todayISO()}.json`);
   toast("Sauvegarde telechargee");
 }
 async function importBackup(e) {
