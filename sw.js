@@ -2,7 +2,7 @@
 // fonctionner une fois installee. Le cache est mis a jour en arriere-plan
 // quand une connexion existe, sans jamais bloquer l'affichage hors-ligne.
 
-const CACHE_NAME = "m3d-cache-v6";
+const CACHE_NAME = "m3d-cache-v7";
 const ASSETS = [
   "./",
   "./index.html",
@@ -23,17 +23,25 @@ self.addEventListener("install", (event) => {
   // On met chaque fichier en cache individuellement pour que l'app
   // s'installe quand meme meme si une ressource externe echoue.
   event.waitUntil(
-    caches.open(CACHE_NAME).then((cache) =>
-      Promise.all(ASSETS.map((url) => cache.add(url).catch(() => {})))
-    ).then(() => self.skipWaiting())
+    caches
+      .open(CACHE_NAME)
+      .then((cache) =>
+        Promise.all(ASSETS.map((url) => cache.add(url).catch(() => {}))),
+      )
+      .then(() => self.skipWaiting()),
   );
 });
 
 self.addEventListener("activate", (event) => {
   event.waitUntil(
-    caches.keys().then((keys) =>
-      Promise.all(keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)))
-    ).then(() => self.clients.claim())
+    caches
+      .keys()
+      .then((keys) =>
+        Promise.all(
+          keys.filter((k) => k !== CACHE_NAME).map((k) => caches.delete(k)),
+        ),
+      )
+      .then(() => self.clients.claim()),
   );
 });
 
@@ -45,12 +53,14 @@ self.addEventListener("fetch", (event) => {
         .then((response) => {
           if (response && response.status === 200) {
             const copy = response.clone();
-            caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
+            caches
+              .open(CACHE_NAME)
+              .then((cache) => cache.put(event.request, copy));
           }
           return response;
         })
         .catch(() => cached);
       return cached || network;
-    })
+    }),
   );
 });
