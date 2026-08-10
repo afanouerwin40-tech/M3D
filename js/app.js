@@ -106,66 +106,6 @@ const app = document.getElementById("app-content");
 const TABS = ["accueil", "membres", "dimanche", "dettes", "plus"];
 let currentTab = "accueil";
 
-// ================================================================
-// downloadFile() — telechargement de fichier compatible iOS 12/13.
-// ================================================================
-// PROBLEME : Safari sur iOS 12 (comme sur l'iPad mini 2 de Godwin) NE
-// SUPPORTE PAS l'attribut `download` sur les liens <a>. Cet attribut n'a
-// ete ajoute qu'a partir d'iOS 13. Sans lui, un `a.click()` classique sur
-// un lien pointant vers un Blob (JSON de sauvegarde, fichier .xlsx, .doc)
-// ne declenche RIEN sur ces appareils : Safari ignore l'attribut et
-// n'ouvre meme pas le fichier. C'est ce qui donnait l'impression que
-// "l'exportation ne marche pas".
-//
-// SOLUTION : on detecte le support de `download` a l'exécution.
-//  - Si supporte (tous les navigateurs modernes, Android, desktop, iOS 13+)
-//    -> methode habituelle : lien invisible + click().
-//  - Si NON supporte (vieux Safari iOS) -> on convertit le Blob en Data URI
-//    (via FileReader, qui existe depuis toujours sur iOS) et on navigue
-//    l'onglet actuel vers cette URI. Safari reconnait alors le type de
-//    fichier (xlsx, doc, json/texte) et ouvre l'apercu integre
-//    (Quick Look) avec un bouton "Partager" permettant d'enregistrer dans
-//    l'app Fichiers, de l'envoyer par mail, AirDrop, etc.
-// Cette meme fonction est utilisee pour TOUS les exports (JSON, Excel,
-// Word) afin de garder un seul endroit a maintenir.
-function downloadFile(blob, filename) {
-  const supportsDownloadAttr = "download" in document.createElement("a");
-  if (supportsDownloadAttr) {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.style.display = "none";
-    document.body.appendChild(a);
-    a.click();
-    setTimeout(() => {
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    }, 1000);
-  } else {
-    // Repli vieux Safari (iOS 12) : Data URI + navigation dans l'onglet
-    // courant. L'utilisateur revient a l'app avec le bouton "Retour" de
-    // Safari (ou en balayant depuis le bord de l'ecran).
-    const reader = new FileReader();
-    reader.onload = () => {
-      window.location.href = reader.result;
-    };
-    reader.onerror = () =>
-      toast("Impossible de generer le fichier sur cet appareil", "error");
-    reader.readAsDataURL(blob);
-  }
-}
-// xlsxDownload() : genere le classeur en memoire (array binaire) puis passe
-// par downloadFile() au lieu de XLSX.writeFile(). XLSX.writeFile() utilise
-// en interne le meme genre de lien <a download> qui echoue sur iOS 12 —
-// en reprenant la main sur le telechargement, on beneficie du repli
-// Data URI pour ces appareils.
-function xlsxDownload(wb, filename) {
-  const wbout = XLSX.write(wb, { bookType: "xlsx", type: "array" });
-  const blob = new Blob([wbout], { type: "application/octet-stream" });
-  downloadFile(blob, filename);
-}
-
 // ---------------------------------------------------------------
 // Theme (exception : localStorage, lu de facon synchrone avant le
 // premier rendu pour eviter un flash du mauvais theme)
@@ -1005,6 +945,7 @@ async function renderMemberList() {
         fullName(a).localeCompare(fullName(b)),
     );
   // "alpha" est deja l'ordre par defaut renvoye par listMembres()
+  const irreguliers = new Set(await membresIrreguliers());
   const box = document.getElementById("memberList");
   if (!box) return;
   box.innerHTML =
@@ -1013,7 +954,7 @@ async function renderMemberList() {
         (m) => `
     <div class="row" data-id="${m.id}">
       <div class="avatar" style="${m.statut === "Inactif" ? "opacity:.45" : ""}">${initials(m)}</div>
-      <div class="info"><div class="name">${esc(fullName(m))}</div>
+      <div class="info"><div class="name">${esc(fullName(m))}${irreguliers.has(m.id) ? ' <span class="badge badge-no" style="margin-left:6px;font-size:10.5px;vertical-align:middle;">⚠ Irregulier</span>' : ""}</div>
       <div class="meta">${m.jour_anniversaire ? String(m.jour_anniversaire).padStart(2, "0") + "/" + String(m.mois_anniversaire).padStart(2, "0") : "Date inconnue"} &middot; ${esc(m.fonction || "Membre")}</div></div>
       <span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span>
     </div>`,
@@ -1045,7 +986,7 @@ async function openMemberDetail(id) {
     <div class="detail-row"><span class="k">Participe (session active)</span><span class="v">${part ? "Oui" : "Non"}</span></div>
     <div class="detail-row"><span class="k">Dettes en cours</span><span class="v">${fmt(dettesTot)}</span></div>
     <div class="sheet-actions">
-      <button class="btn btn-ghost" id="editMemberBtn" style="margin-bottom:8px;">Modifier les informations</button>
+      <button class="btn btn-ghost" id="editMemberBtn" style="margin-bottom:8px;">Modifier fonction / cotisation</button>
       <button class="btn btn-ghost" id="toggleStatutBtn">${m.statut === "Actif" ? "Marquer inactif" : "Reactiver"}</button>
     </div>
   `);
@@ -1066,43 +1007,31 @@ async function openMemberDetail(id) {
     setTimeout(() => openEditMember(m), 200);
   });
 }
-// ---------------------------------------------------------------
-// openEditMember — fiche membre modifiable avec SAUVEGARDE AUTOMATIQUE.
-// ---------------------------------------------------------------
-// Contrairement a l'ancien formulaire (qui ne touchait que fonction/
-// telephone/cotisation et exigeait un clic sur "Enregistrer"), cette
-// version :
-//  1) permet de modifier TOUTES les informations du membre (nom, prenom,
-//     date d'anniversaire, telephone, fonction, cotisation personnalisee,
-//     observations) ;
-//  2) enregistre chaque champ tout seul, sans bouton : un debounce (le
-//     meme principe que globalSearchTimer plus haut dans ce fichier)
-//     attend que l'utilisateur arrete de taper pendant EM_AUTOSAVE_DELAY
-//     millisecondes avant d'ecrire dans IndexedDB. Les <select> (fonction,
-//     jour/mois anniversaire) sauvegardent immediatement au changement,
-//     puisqu'il n'y a pas de "frappe en cours" a attendre pour eux.
-//
-// Le champ "Prenom" reste obligatoire (c'est aussi la regle dans
-// openAddMember) : si l'utilisateur le vide, on ne sauvegarde PAS et on
-// affiche un etat d'erreur au lieu d'ecrire une fiche invalide en base.
 function openEditMember(m) {
-  const EM_AUTOSAVE_DELAY = 700; // ms d'inactivite avant sauvegarde
   openSheet(`
     <button class="sheet-close" data-close>&times;</button>
-    <h3 id="em_title">Modifier ${esc(fullName(m))}</h3>
-    <div class="autosave-status as-idle" id="em_status"><span class="dot"></span><span id="em_status_text">Les modifications sont enregistrees automatiquement</span></div>
-    <div class="field"><label>Nom</label><input id="em_nom" type="text" value="${esc(m.nom || "")}"></div>
-    <div class="field"><label>Prenom</label><input id="em_prenom" type="text" value="${esc(m.prenom || "")}" required></div>
+    <h3>Modifier ${esc(fullName(m))}</h3>
+    <div class="field-row">
+      <div class="field"><label>Nom</label><input id="em_nom" type="text" value="${esc(m.nom || "")}"></div>
+      <div class="field"><label>Prenom</label><input id="em_prenom" type="text" value="${esc(m.prenom || "")}"></div>
+    </div>
     <div class="field-row">
       <div class="field"><label>Jour anniv.</label><select id="em_jj">${dayOptionsHTML(m.jour_anniversaire)}</select></div>
       <div class="field"><label>Mois anniv.</label><select id="em_mm">${monthOptionsHTML(m.mois_anniversaire)}</select></div>
     </div>
-    <div class="field"><label>Telephone</label><input id="em_tel" type="tel" value="${esc(m.telephone || "")}"></div>
     <div class="field"><label>Fonction</label><select id="em_fonction_select">${fonctionOptionsHTML(m.fonction || "Membre")}</select></div>
     <div class="field" id="em_fonction_autre_wrap" style="display:none;"><label>Preciser la fonction</label><input id="em_fonction_autre" type="text" placeholder="Ex: Responsable des enfants"></div>
+    <div class="field"><label>Telephone</label><input id="em_tel" type="tel" value="${esc(m.telephone || "")}"></div>
     <div class="field"><label>Cotisation hebdomadaire personnalisee (FCFA)</label><input id="em_cotis" type="number" placeholder="Laisser vide = montant par defaut" value="${m.cotisation_personnalisee || ""}"></div>
-    <div class="small-note">Ex. le President cotise 1000 F au lieu des 500 F habituels : indique 1000 ici pour lui.</div>
-    <div class="field" style="margin-top:14px;"><label>Observations</label><textarea id="em_obs" placeholder="Notes libres sur ce membre...">${esc(m.observations || "")}</textarea></div>
+    <div class="small-note" style="margin-bottom:12px;">Ex. le President cotise 1000 F au lieu des 500 F habituels : indique 1000 ici pour lui.</div>
+    <div class="field"><label>Statut</label>
+      <select id="em_statut">
+        <option value="Actif"${m.statut === "Actif" ? " selected" : ""}>Actif (cotise, apparait dans les prochains dimanches)</option>
+        <option value="Inactif"${m.statut === "Inactif" ? " selected" : ""}>Inactif (ne cotise plus, n'apparait plus)</option>
+      </select>
+    </div>
+    <div class="field"><label>Observations</label><input id="em_obs" type="text" value="${esc(m.observations || "")}" placeholder="Facultatif"></div>
+    <button class="btn btn-primary" id="em_save" style="margin-top:14px;">Enregistrer</button>
   `);
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
   wireFonctionAutre(
@@ -1111,105 +1040,43 @@ function openEditMember(m) {
     "em_fonction_autre",
     m.fonction || "Membre",
   );
-
-  const statusBox = document.getElementById("em_status");
-  const statusText = document.getElementById("em_status_text");
-  function setStatus(kind, text) {
-    statusBox.className = `autosave-status as-${kind}`;
-    statusText.textContent = text;
-  }
-  function formatHeure() {
-    return new Date().toLocaleTimeString("fr-FR", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
-  }
-
-  let em_saveTimer = null;
-  let em_dirty = false; // true = il y a des changements pas encore ecrits en base
-  let em_hasLoggedThisBurst = false; // evite de spammer activity_log a chaque frappe
-  async function persistNow() {
-    em_saveTimer = null;
-    em_dirty = false;
+  document.getElementById("em_save").addEventListener("click", async () => {
     const prenom = document.getElementById("em_prenom").value.trim();
     if (!prenom) {
-      setStatus(
-        "error",
-        "Le prenom ne peut pas etre vide — modification non enregistree",
-      );
+      toast("Le prenom est obligatoire", "error");
       return;
     }
     const cotisVal = document.getElementById("em_cotis").value;
-    const patch = {
+    const nouveauStatut = document.getElementById("em_statut").value;
+    const passageEnInactif =
+      m.statut === "Actif" && nouveauStatut === "Inactif";
+    await db.membres.update(m.id, {
       nom: document.getElementById("em_nom").value.trim(),
       prenom,
       jour_anniversaire: Number(document.getElementById("em_jj").value) || null,
       mois_anniversaire: Number(document.getElementById("em_mm").value) || null,
-      telephone: document.getElementById("em_tel").value.trim(),
       fonction: fonctionValueFrom("em_fonction_select", "em_fonction_autre"),
+      telephone: document.getElementById("em_tel").value.trim(),
       cotisation_personnalisee: cotisVal ? Number(cotisVal) : null,
+      statut: nouveauStatut,
       observations: document.getElementById("em_obs").value.trim(),
-    };
-    try {
-      await db.membres.update(m.id, patch);
-      Object.assign(m, patch); // garde m a jour pour les prochains passages (titre, etc.)
-      if (!em_hasLoggedThisBurst) {
-        await log("membre", "modifie", m.id);
-        em_hasLoggedThisBurst = true;
-      }
-      setStatus("saved", `Enregistre a ${formatHeure()}`);
-      document.getElementById("em_title").textContent =
-        `Modifier ${fullName(m)}`;
-      renderMemberList(); // rafraichit la liste en fond, sans fermer la fiche
-    } catch (e) {
-      setStatus("error", "Erreur d'enregistrement — reessaie");
+    });
+    await log("membre", "modifie", m.id);
+    if (passageEnInactif) {
+      // passerMembreInactif() efface les dettes (paiements non payes) mais
+      // remet a jour le statut une 2e fois -- inoffensif, deja "Inactif".
+      const nbEffacees = await passerMembreInactif(m.id);
+      closeSheet();
+      toast(
+        nbEffacees > 0
+          ? `Membre passe Inactif — ${nbEffacees} dette(s) effacee(s)`
+          : "Membre passe Inactif",
+      );
+    } else {
+      closeSheet();
+      toast("Membre mis a jour");
     }
-  }
-  // scheduleSave() : sauvegarde debattue (debounce), utilisee sur les champs
-  // texte/nombre ou l'utilisateur tape en continu (evite une ecriture en
-  // base a chaque caractere).
-  function scheduleSave() {
-    setStatus("saving", "Enregistrement...");
-    em_hasLoggedThisBurst = false;
-    em_dirty = true;
-    clearTimeout(em_saveTimer);
-    em_saveTimer = setTimeout(persistNow, EM_AUTOSAVE_DELAY);
-  }
-  // saveImmediately() : pour les <select> (fonction, jour, mois) — pas de
-  // frappe en cours, donc pas besoin d'attendre.
-  function saveImmediately() {
-    setStatus("saving", "Enregistrement...");
-    em_hasLoggedThisBurst = false;
-    em_dirty = true;
-    clearTimeout(em_saveTimer);
-    persistNow();
-  }
-
-  ["em_nom", "em_prenom", "em_tel", "em_cotis", "em_obs"].forEach((id) => {
-    document.getElementById(id).addEventListener("input", scheduleSave);
-  });
-  ["em_jj", "em_mm", "em_fonction_select"].forEach((id) => {
-    document.getElementById(id).addEventListener("change", saveImmediately);
-  });
-  // Champ "Autre fonction" : c'est un input texte, donc debounce comme les autres.
-  document
-    .getElementById("em_fonction_autre")
-    .addEventListener("input", scheduleSave);
-
-  // Si l'utilisateur ferme la fiche pendant qu'une sauvegarde est encore en
-  // attente (debounce pas encore ecoule), on la force immediatement pour ne
-  // jamais perdre la derniere frappe.
-  function flushBeforeClose() {
-    if (em_dirty) {
-      clearTimeout(em_saveTimer);
-      persistNow();
-    }
-  }
-  document
-    .querySelector("[data-close]")
-    .addEventListener("click", flushBeforeClose);
-  sheetStack[sheetStack.length - 1].addEventListener("click", (e) => {
-    if (e.target.classList.contains("overlay")) flushBeforeClose();
+    renderMemberList();
   });
 }
 function openAddMember() {
@@ -1368,6 +1235,13 @@ async function openWeekDetail(dimId) {
     .toArray();
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const pretsDuJour = await db.prets_membres
+    .where("id_dimanche")
+    .equals(dimId)
+    .toArray();
+  const preteurParPaiement = Object.fromEntries(
+    pretsDuJour.map((pr) => [pr.id_paiement, pr.id_preteur]),
+  );
   const benefNames =
     anniv
       .map((a) =>
@@ -1388,9 +1262,17 @@ async function openWeekDetail(dimId) {
     )
     .map((p) => {
       const m = memById[p.id_membre] || { nom: "?", prenom: "" };
+      const idPreteur = preteurParPaiement[p.id];
+      const preteur = idPreteur ? memById[idPreteur] : null;
+      const label = p.a_paye
+        ? preteur
+          ? `Paye (via ${esc(fullName(preteur))})`
+          : "Paye"
+        : "Non paye";
       return `<div class="chip-row" data-paiement="${p.id}">
         <span class="name">${esc(fullName(m))}</span>
-        <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${p.a_paye ? "Paye" : "Non paye"}</button>
+        ${!p.a_paye ? `<button class="btn-chip" data-pret="${p.id}" title="Un autre membre a paye a sa place" style="margin-right:4px;">Pret</button>` : ""}
+        <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${label}</button>
       </div>`;
     })
     .join("");
@@ -1431,12 +1313,18 @@ async function openWeekDetail(dimId) {
     btn.addEventListener("click", async () => {
       const pid = btn.dataset.togglePaiement;
       const cur = btn.classList.contains("on");
-      await marquerPaiement(pid, !cur);
-      // Mise a jour en place (pas de fermeture/reouverture) pour ne pas
-      // faire sauter la liste tout en haut.
-      btn.classList.toggle("on", !cur);
-      btn.classList.toggle("off", cur);
-      btn.textContent = !cur ? "Paye" : "Non paye";
+      const nextPaye = !cur;
+      await marquerPaiement(pid, nextPaye);
+      if (!nextPaye) {
+        // On repasse "Non paye" a la main : si un pret entre membres etait
+        // associe a ce paiement, il n'a plus lieu d'etre.
+        const prets = await db.prets_membres
+          .where("id_paiement")
+          .equals(pid)
+          .toArray();
+        for (const pr of prets) await db.prets_membres.delete(pr.id);
+      }
+      await refreshWeekRows();
       const freshPaiements = await db.paiements
         .where("id_dimanche")
         .equals(dimId)
@@ -1449,6 +1337,124 @@ async function openWeekDetail(dimId) {
       else if (currentTab === "dettes") renderDettes();
     });
   });
+  ov.querySelectorAll("[data-pret]").forEach((btn) => {
+    btn.addEventListener("click", () => openPretPicker(btn.dataset.pret));
+  });
+  async function refreshWeekRows() {
+    const freshPaiements = await db.paiements
+      .where("id_dimanche")
+      .equals(dimId)
+      .toArray();
+    const freshPrets = await db.prets_membres
+      .where("id_dimanche")
+      .equals(dimId)
+      .toArray();
+    const freshPreteurParPaiement = Object.fromEntries(
+      freshPrets.map((pr) => [pr.id_paiement, pr.id_preteur]),
+    );
+    const rowsBox = ov.querySelector("#wd_rows");
+    rowsBox.innerHTML = freshPaiements
+      .slice()
+      .sort((a, b) =>
+        fullName(memById[a.id_membre] || {}).localeCompare(
+          fullName(memById[b.id_membre] || {}),
+        ),
+      )
+      .map((p) => {
+        const m = memById[p.id_membre] || { nom: "?", prenom: "" };
+        const idPreteur = freshPreteurParPaiement[p.id];
+        const preteur = idPreteur ? memById[idPreteur] : null;
+        const label = p.a_paye
+          ? preteur
+            ? `Paye (via ${esc(fullName(preteur))})`
+            : "Paye"
+          : "Non paye";
+        return `<div class="chip-row" data-paiement="${p.id}">
+          <span class="name">${esc(fullName(m))}</span>
+          ${!p.a_paye ? `<button class="btn-chip" data-pret="${p.id}" title="Un autre membre a paye a sa place" style="margin-right:4px;">Pret</button>` : ""}
+          <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${label}</button>
+        </div>`;
+      })
+      .join("");
+    rowsBox.querySelectorAll("[data-toggle-paiement]").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const pid = btn.dataset.togglePaiement;
+        const cur = btn.classList.contains("on");
+        const nextPaye = !cur;
+        await marquerPaiement(pid, nextPaye);
+        if (!nextPaye) {
+          const prets = await db.prets_membres
+            .where("id_paiement")
+            .equals(pid)
+            .toArray();
+          for (const pr of prets) await db.prets_membres.delete(pr.id);
+        }
+        await refreshWeekRows();
+        const fp = await db.paiements
+          .where("id_dimanche")
+          .equals(dimId)
+          .toArray();
+        const newTotal = fp.reduce((a, p) => a + p.montant_paye, 0);
+        const totalEl = ov.querySelector("#" + totalId + " b");
+        if (totalEl) totalEl.textContent = fmt(newTotal);
+        if (currentTab === "accueil") renderAccueil();
+        else if (currentTab === "dimanche") renderDimanche();
+        else if (currentTab === "dettes") renderDettes();
+      });
+    });
+    rowsBox.querySelectorAll("[data-pret]").forEach((btn) => {
+      btn.addEventListener("click", () => openPretPicker(btn.dataset.pret));
+    });
+  }
+  function openPretPicker(idPaiement) {
+    const autresParticipants = paiements
+      .filter((p) => p.id !== idPaiement)
+      .map((p) => memById[p.id_membre])
+      .filter(Boolean);
+    openSheet(`
+      <button class="sheet-close" data-close>&times;</button>
+      <h3>Qui a avance l'argent ?</h3>
+      <div class="small-note" style="margin-bottom:10px;">La cotisation sera marquee payee immediatement pour le groupe. Le pret entre les deux membres sera suivi a part (Plus &rarr; Prets entre membres).</div>
+      <div id="pret_list"></div>
+    `);
+    const box = document.getElementById("pret_list");
+    box.innerHTML = autresParticipants.length
+      ? autresParticipants
+          .map(
+            (m) => `
+      <div class="row" data-preteur="${m.id}" style="cursor:pointer;">
+        <div class="avatar">${initials(m)}</div>
+        <div class="info"><div class="name">${esc(fullName(m))}</div></div>
+      </div>`,
+          )
+          .join("")
+      : emptyHTML("Aucun autre participant sur ce dimanche.");
+    document
+      .querySelector("[data-close]")
+      .addEventListener("click", closeSheet);
+    box.querySelectorAll("[data-preteur]").forEach((el) =>
+      el.addEventListener("click", async () => {
+        try {
+          await enregistrerPretMembre(idPaiement, el.dataset.preteur);
+          closeSheet();
+          toast("Pret enregistre — cotisation marquee payee");
+          await refreshWeekRows();
+          const fp = await db.paiements
+            .where("id_dimanche")
+            .equals(dimId)
+            .toArray();
+          const newTotal = fp.reduce((a, p) => a + p.montant_paye, 0);
+          const totalEl = ov.querySelector("#" + totalId + " b");
+          if (totalEl) totalEl.textContent = fmt(newTotal);
+          if (currentTab === "accueil") renderAccueil();
+          else if (currentTab === "dimanche") renderDimanche();
+          else if (currentTab === "dettes") renderDettes();
+        } catch (err) {
+          toast(err.message || "Erreur", "error");
+        }
+      }),
+    );
+  }
   ov.querySelector("#wd_delete").addEventListener("click", async () => {
     const ok = await confirmWithPassword(
       "Cette suppression est definitive et efface tous les paiements de ce dimanche. Confirme avec le mot de passe administrateur.",
@@ -1559,6 +1565,78 @@ const LISTE_COULEURS = [
   "#DB2777",
   "#4B5563",
 ];
+
+// ---------------------------------------------------------------
+// PRETS ENTRE MEMBRES — vue de gestion (voir aussi exportPretsMembresPDF)
+// ---------------------------------------------------------------
+let pretsShowRembourses = false;
+async function renderPretsMembres() {
+  app.innerHTML = `
+    <button class="btn-chip" id="pretsBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
+    <div class="section-title" style="margin-top:0;"><h2>Prets entre membres</h2></div>
+    <div class="small-note" style="margin-bottom:12px;">Quand un membre absent se fait avancer sa cotisation par un autre (bouton "Pret" sur un dimanche), c'est ici que ca se retrouve. Ce n'est pas une dette envers le groupe : le groupe a deja recu l'argent.</div>
+    <div class="row" style="border:none;padding:0 4px 12px;justify-content:flex-start;gap:8px;">
+      <button class="btn-chip ${!pretsShowRembourses ? "active" : ""}" id="prets_filtre_attente">En attente</button>
+      <button class="btn-chip ${pretsShowRembourses ? "active" : ""}" id="prets_filtre_rembourses">Rembourses</button>
+    </div>
+    <button class="btn btn-ghost" id="pretsExportBtn" style="margin-bottom:16px;">Exporter en PDF</button>
+    <div id="pretsBox"></div>
+  `;
+  document
+    .getElementById("pretsBackBtn")
+    .addEventListener("click", () => showTab("plus"));
+  document
+    .getElementById("prets_filtre_attente")
+    .addEventListener("click", () => {
+      pretsShowRembourses = false;
+      renderPretsMembres();
+    });
+  document
+    .getElementById("prets_filtre_rembourses")
+    .addEventListener("click", () => {
+      pretsShowRembourses = true;
+      renderPretsMembres();
+    });
+  document
+    .getElementById("pretsExportBtn")
+    .addEventListener("click", exportPretsMembresPDF);
+
+  const prets = await pretsMembres({
+    nonRembourseSeulement: !pretsShowRembourses,
+  });
+  const membres = await db.membres.toArray();
+  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const box = document.getElementById("pretsBox");
+  box.innerHTML = prets.length
+    ? prets
+        .map((p) => {
+          const debiteur = memById[p.id_debiteur];
+          const preteur = memById[p.id_preteur];
+          return `<div class="card" style="margin-bottom:10px;">
+      <div class="detail-row" style="border:none;padding:0 0 4px;">
+        <span class="k" style="font-weight:600;color:var(--text);">${debiteur ? esc(fullName(debiteur)) : "?"} doit a ${preteur ? esc(fullName(preteur)) : "?"}</span>
+        <span class="v">${fmt(p.montant)}</span>
+      </div>
+      <div class="small-note" style="margin-bottom:10px;">${fmtDate(p.date)}${p.rembourse ? " &middot; Rembourse" : ""}</div>
+      <button class="btn-chip ${p.rembourse ? "" : "active"}" data-toggle-pret="${p.id}">${p.rembourse ? "Marquer non rembourse" : "Marquer rembourse"}</button>
+    </div>`;
+        })
+        .join("")
+    : emptyHTML(
+        pretsShowRembourses
+          ? "Aucun pret rembourse pour l'instant."
+          : "Aucun pret en attente. Tout le monde est a jour !",
+      );
+  box.querySelectorAll("[data-toggle-pret]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const id = btn.dataset.togglePret;
+      const pret = prets.find((p) => p.id === id);
+      await marquerPretRembourse(id, !pret.rembourse);
+      toast(pret.rembourse ? "Marque non rembourse" : "Marque rembourse");
+      renderPretsMembres();
+    }),
+  );
+}
 
 let listesQuery = "";
 let listesShowArchivees = false;
@@ -1730,7 +1808,6 @@ async function renderListeDetailSheet(id) {
 
     <div class="sheet-actions" style="margin-top:16px;">
       <button class="btn btn-ghost" id="ld_export_pdf" style="margin-bottom:8px;">Exporter en PDF</button>
-      <button class="btn btn-ghost" id="ld_export_xls" style="margin-bottom:8px;">Exporter en Excel (.xlsx)</button>
       <button class="btn btn-ghost" id="ld_duplicate" style="margin-bottom:8px;">Dupliquer cette liste</button>
       <button class="btn btn-ghost" id="ld_archive" style="margin-bottom:8px;">${l.archivee ? "Desarchiver" : "Archiver"}</button>
       <button class="btn btn-ghost" id="ld_delete" style="color:var(--danger);">Supprimer la liste</button>
@@ -1771,9 +1848,6 @@ async function renderListeDetailSheet(id) {
 
   ov.querySelector("#ld_export_pdf").addEventListener("click", () =>
     exportListePDF(id),
-  );
-  ov.querySelector("#ld_export_xls").addEventListener("click", () =>
-    exportListeExcel(id),
   );
   ov.querySelector("#ld_duplicate").addEventListener("click", async () => {
     const newId = await dupliquerListe(id);
@@ -1934,41 +2008,6 @@ async function exportListePDF(id) {
   `;
   if (win) writePrintableDocument(win, l.nom, body);
 }
-async function exportListeExcel(id) {
-  if (typeof XLSX === "undefined") {
-    toast("Module Excel indisponible hors-ligne", "error");
-    return;
-  }
-  const l = await db.listes.get(id);
-  const membres = await membresDeListe(id);
-  const presenceLabel = {
-    present: "Present",
-    absent: "Absent",
-    attente: "En attente",
-  };
-  const rows = membres.map((m) => ({
-    Nom: m.nom,
-    Prenom: m.prenom,
-    Telephone: m.telephone || "",
-    Fonction: m.fonction || "Membre",
-    Presence: presenceLabel[m.presence],
-  }));
-  const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 12 },
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, l.nom.slice(0, 28) || "Liste");
-  xlsxDownload(
-    wb,
-    `m3d-liste-${(l.nom || "liste").toLowerCase().replace(/[^a-z0-9]+/g, "-")}-${todayISO()}.xlsx`,
-  );
-  toast("Fichier Excel telecharge");
-}
 
 // ---------------------------------------------------------------
 // PLUS (Caisse, Parametres, Export, A propos)
@@ -1981,13 +2020,22 @@ async function renderPlus() {
   );
   const montantCotis = await getParam("montant_cotisation_defaut", 500);
   const montantCadeau = await getParam("montant_cadeau_defaut", 12000);
+  const pretsEnAttente = (await pretsMembres({ nonRembourseSeulement: true }))
+    .length;
 
   app.innerHTML = `
     <div class="section-title" style="margin-top:0;"><h2>Mes listes</h2></div>
-    <div class="card list-card" id="plusListesBox" style="margin-bottom:24px;cursor:pointer;">
+    <div class="card list-card" id="plusListesBox" style="margin-bottom:16px;cursor:pointer;">
       <div class="row" style="border:none;padding:2px 4px;">
         <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg></span>
         <div class="info"><div class="name">Listes personnalisees</div><div class="meta">Sorties, reunions, camps, evenements...</div></div>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
+      </div>
+    </div>
+    <div class="card list-card" id="plusPretsBox" style="margin-bottom:24px;cursor:pointer;">
+      <div class="row" style="border:none;padding:2px 4px;">
+        <span class="liste-icon" style="background:var(--bg-warning);color:var(--warning);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2M9 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H11a2 2 0 0 0-2 2v9Z"/></svg></span>
+        <div class="info"><div class="name">Prets entre membres</div><div class="meta">${pretsEnAttente > 0 ? `${pretsEnAttente} en attente de remboursement` : "Aucun pret en attente"}</div></div>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
       </div>
     </div>
@@ -2031,13 +2079,12 @@ async function renderPlus() {
 
     <div class="section-title"><h2>Export &amp; impression</h2></div>
     <div class="card" style="margin-bottom:24px;">
-      <button class="btn btn-ghost" id="exportMembresXlsBtn" style="margin-bottom:10px;">Membres — Excel (.xlsx)</button>
       <button class="btn btn-ghost" id="exportMembresPdfBtn" style="margin-bottom:10px;">Membres — PDF</button>
-      <button class="btn btn-ghost" id="exportDettesXlsBtn" style="margin-bottom:10px;">Dettes — Excel (.xlsx)</button>
+      <button class="btn btn-ghost" id="exportDettesPdfBtn" style="margin-bottom:10px;">Dettes du groupe — PDF</button>
+      <button class="btn btn-ghost" id="exportPretsPdfBtn" style="margin-bottom:10px;">Prets entre membres — PDF</button>
       <button class="btn btn-ghost" id="exportRapportPdfBtn" style="margin-bottom:10px;">Rapport complet — PDF</button>
-      <button class="btn btn-ghost" id="exportRapportXlsBtn" style="margin-bottom:10px;">Rapport complet — Excel (.xlsx)</button>
       <button class="btn btn-ghost" id="exportRapportDocBtn" style="margin-bottom:10px;">Rapport complet — Word (.doc)</button>
-      <div class="small-note">Ces documents sont prets a etre envoyes ou imprimes depuis n'importe quelle application (Word, Excel, lecteur PDF). Pour exporter une cotisation precise (un dimanche donne), ouvre-le depuis l'onglet Dimanches.</div>
+      <div class="small-note">Ces documents sont prets a etre envoyes ou imprimes depuis n'importe quelle application. Pour exporter une cotisation precise (un dimanche donne), ouvre-le depuis l'onglet Dimanches. Les prets entre membres sont exportes a part des dettes du groupe : ce sont deux choses differentes.</div>
     </div>
 
     <div class="section-title"><h2>Apparence</h2></div>
@@ -2080,6 +2127,9 @@ async function renderPlus() {
     .getElementById("plusListesBox")
     .addEventListener("click", renderListes);
   document
+    .getElementById("plusPretsBox")
+    .addEventListener("click", renderPretsMembres);
+  document
     .getElementById("addMouvBtn")
     .addEventListener("click", openAddMouvement);
   document
@@ -2106,20 +2156,17 @@ async function renderPlus() {
     .getElementById("importJsonInput")
     .addEventListener("change", importBackup);
   document
-    .getElementById("exportMembresXlsBtn")
-    .addEventListener("click", exportMembresExcel);
-  document
     .getElementById("exportMembresPdfBtn")
     .addEventListener("click", exportMembresPDF);
   document
-    .getElementById("exportDettesXlsBtn")
-    .addEventListener("click", exportDettesExcel);
+    .getElementById("exportDettesPdfBtn")
+    .addEventListener("click", exportDettesPDF);
+  document
+    .getElementById("exportPretsPdfBtn")
+    .addEventListener("click", exportPretsMembresPDF);
   document
     .getElementById("exportRapportPdfBtn")
     .addEventListener("click", exportRapportPDF);
-  document
-    .getElementById("exportRapportXlsBtn")
-    .addEventListener("click", exportRapportExcel);
   document
     .getElementById("exportRapportDocBtn")
     .addEventListener("click", exportRapportWord);
@@ -2152,7 +2199,8 @@ async function renderPlus() {
 }
 
 // ---------------------------------------------------------------
-// Export Excel (.xlsx via SheetJS) et Word (.doc) pour impression
+// Export PDF (fenetre imprimable) et Word (.doc) pour impression. Le
+// support Excel (.xlsx) a ete retire : uniquement PDF desormais.
 // ---------------------------------------------------------------
 // Export PDF sans dependance : on ouvre une fenetre isolee avec un document
 // HTML propre et on declenche l'impression du navigateur (l'utilisateur
@@ -2161,17 +2209,19 @@ async function renderPlus() {
 // toujours). La fenetre doit etre ouverte de facon SYNCHRONE des le clic
 // (avant tout await) pour ne pas etre bloquee par les bloqueurs de popup
 // de Safari.
+// Export PDF sans dependance : on ouvre une fenetre isolee avec un document
+// HTML propre et on declenche l'impression du navigateur (l'utilisateur
+// choisit "Enregistrer au format PDF" comme destination). Fonctionne 100%
+// hors-ligne et sur les tres vieux navigateurs.
 //
-// LIMITATION CONNUE SUR iOS (Safari mobile, y compris iOS 12) : contrairement
-// a Safari sur Mac, Safari sur iPhone/iPad n'implemente PAS window.print()
-// depuis une page web — le bouton "Imprimer / Enregistrer en PDF" ne fait
-// alors RIEN, sans erreur visible. C'est une limitation d'Apple, pas un bug
-// de l'app. Le contournement fiable sur iOS est le menu natif de Safari
-// (icone Partager, carre avec une fleche) -> "Imprimer" -> pincer l'apercu
-// avec deux doigts pour le transformer en PDF partageable. On affiche donc
-// une consigne explicite dans la fenetre exportee, visible uniquement sur
-// petit ecran tactile (via une media query grossiere sur pointer:coarse),
-// pour guider l'utilisateur si le bouton ne reagit pas.
+// IMPORTANT : on construit le document via un Blob + URL.createObjectURL()
+// plutot que document.write(). document.write() sur une fenetre popup est
+// une API fragile : sur certains navigateurs (dont d'anciens Safari), le
+// print() se declenchait AVANT que le CSS ait fini de s'appliquer, ce qui
+// donnait un rendu "texte brut" sans mise en forme lors de l'impression/
+// export PDF (bug corrige ici). Avec un Blob charge via URL normale, la
+// fenetre suit un vrai cycle de chargement de page (comme un lien classique)
+// et le CSS est garanti pret avant que "load" se declenche.
 function openPrintableWindow() {
   const win = window.open("", "_blank");
   if (!win) {
@@ -2191,34 +2241,22 @@ function writePrintableDocument(win, title, bodyHtml) {
     .meta{color:#6B7280;font-size:12.5px;margin-bottom:14px;}
     .print-bar{margin-bottom:18px;}
     .print-bar button{font:inherit;padding:9px 16px;border-radius:8px;border:none;background:#2563EB;color:#fff;cursor:pointer;}
-    .print-ios-note{display:none;font-size:12.5px;color:#6B7280;margin-top:8px;line-height:1.5;}
-    @media (pointer:coarse) { .print-ios-note{display:block;} }
     @media print { .print-bar{display:none;} }
   `;
-  win.document.open();
-  win.document
-    .write(`<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>
-    <div class="print-bar">
-      <button onclick="window.print()">Imprimer / Enregistrer en PDF</button>
-      <div class="print-ios-note">Si rien ne se passe (frequent sur iPhone/iPad) : utilise le bouton Partager de Safari (le carre avec la fleche vers le haut), choisis "Imprimer", puis pince l'apercu avec deux doigts pour l'agrandir — cela le transforme en PDF que tu peux enregistrer ou partager.</div>
-    </div>
+  const html = `<!DOCTYPE html><html><head><meta charset="utf-8"><title>${title}</title><style>${style}</style></head><body>
+    <div class="print-bar"><button onclick="window.print()">Imprimer / Enregistrer en PDF</button></div>
     ${bodyHtml}
-  </body></html>`);
-  win.document.close();
-  win.onload = () => {
+  </body></html>`;
+  const blob = new Blob([html], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  win.location.href = url;
+  win.addEventListener("load", () => {
     try {
       win.focus();
       win.print();
     } catch (e) {}
-  };
-  // Certains navigateurs (dont d'anciens Safari) declenchent onload avant que
-  // le document ecrit via write() soit pret : on relance apres un court delai.
-  setTimeout(() => {
-    try {
-      win.focus();
-      win.print();
-    } catch (e) {}
-  }, 400);
+    setTimeout(() => URL.revokeObjectURL(url), 60000);
+  });
 }
 
 async function exportMembresPDF() {
@@ -2241,6 +2279,57 @@ async function exportMembresPDF() {
     <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Fonction</th><th>Anniversaire</th><th>Date d'ajout</th><th>Statut</th></tr>${rows}</table>
   `;
   if (win) writePrintableDocument(win, "Membres — M3D", body);
+}
+
+async function exportDettesPDF() {
+  const win = openPrintableWindow();
+  const dettes = (await dettesList()).filter((d) => d.statut === "Impayee");
+  const total = dettes.reduce((a, d) => a + d.montant, 0);
+  const rows =
+    dettes
+      .map(
+        (d) =>
+          `<tr><td>${esc(d.membre)}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
+  const body = `
+    <h1>Jeunesse M3D — Dettes du groupe</h1>
+    <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${dettes.length} dette(s) impayee(s)</div>
+    <table><tr><th>Membre</th><th>Date</th><th>Montant</th></tr>${rows}</table>
+    <h2>Total</h2>
+    <table><tr><th>Total des dettes impayees</th><td>${fmt(total)}</td></tr></table>
+    <p class="meta">Ceci ne concerne que l'argent du au GROUPE. Les prets personnels entre membres (quelqu'un qui a avance une cotisation pour un autre) sont exportes separement.</p>
+  `;
+  if (win) writePrintableDocument(win, "Dettes du groupe — M3D", body);
+}
+
+async function exportPretsMembresPDF() {
+  const win = openPrintableWindow();
+  const prets = await pretsMembres();
+  const membres = await db.membres.toArray();
+  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const nomOf = (id) => (memById[id] ? esc(fullName(memById[id])) : "?");
+  const rows =
+    prets
+      .map(
+        (p) => `<tr>
+    <td>${nomOf(p.id_debiteur)}</td><td>${nomOf(p.id_preteur)}</td>
+    <td>${fmt(p.montant)}</td><td>${fmtDate(p.date)}</td>
+    <td>${p.rembourse ? "Rembourse" : "En attente"}</td>
+  </tr>`,
+      )
+      .join("") || `<tr><td colspan="5">Aucun pret enregistre</td></tr>`;
+  const enAttente = prets.filter((p) => !p.rembourse);
+  const totalEnAttente = enAttente.reduce((a, p) => a + p.montant, 0);
+  const body = `
+    <h1>Jeunesse M3D — Prets entre membres</h1>
+    <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${enAttente.length} pret(s) en attente de remboursement</div>
+    <table><tr><th>Doit a</th><th>A avance</th><th>Montant</th><th>Date</th><th>Statut</th></tr>${rows}</table>
+    <h2>Total en attente</h2>
+    <table><tr><th>Total des prets non rembourses</th><td>${fmt(totalEnAttente)}</td></tr></table>
+    <p class="meta">Ceci concerne des arrangements PERSONNELS entre membres (un membre absent s'est fait avancer sa cotisation par un autre). Cet argent est deja compte comme recu par le groupe et n'apparait donc pas dans les dettes du groupe.</p>
+  `;
+  if (win) writePrintableDocument(win, "Prets entre membres — M3D", body);
 }
 
 async function exportCotisationPDF(idDimanche) {
@@ -2348,126 +2437,6 @@ async function exportRapportPDF() {
   `;
   if (win) writePrintableDocument(win, "Rapport general — M3D", body);
 }
-async function exportRapportExcel() {
-  if (typeof XLSX === "undefined") {
-    toast("Module Excel indisponible hors-ligne", "error");
-    return;
-  }
-  const r = await rapportStats();
-  const wb = XLSX.utils.book_new();
-  const wsResume = XLSX.utils.json_to_sheet([
-    { Indicateur: "Membres", Valeur: r.totalMembres },
-    { Indicateur: "Dimanches realises", Valeur: r.nbDimanches },
-    { Indicateur: "Montant total collecte", Valeur: r.totalCollecte },
-    { Indicateur: "Montant distribue", Valeur: r.totalDistribue },
-    { Indicateur: "Solde caisse", Valeur: r.solde },
-    { Indicateur: "Dettes impayees", Valeur: r.dettesTotal },
-    {
-      Indicateur: "Taux de participation moyen (%)",
-      Valeur: Math.round(r.tauxParticipationGlobal * 100),
-    },
-    { Indicateur: "Listes personnalisees actives", Valeur: r.nbListes },
-  ]);
-  XLSX.utils.book_append_sheet(wb, wsResume, "Resume");
-  const wsFonctions = XLSX.utils.json_to_sheet(
-    Object.entries(r.parFonction).map(([Fonction, Membres]) => ({
-      Fonction,
-      Membres,
-    })),
-  );
-  XLSX.utils.book_append_sheet(wb, wsFonctions, "Fonctions");
-  const wsMois = XLSX.utils.json_to_sheet(
-    r.parMois.map((x) => ({ Mois: x.mois, Membres: x.nb })),
-  );
-  XLSX.utils.book_append_sheet(wb, wsMois, "Anniversaires par mois");
-  const wsReg = XLSX.utils.json_to_sheet(
-    r.plusReguliers.map((x) => ({
-      Membre: fullName(x.membre),
-      Payes: x.paye,
-      Total: x.total,
-      "Taux (%)": Math.round(x.taux * 100),
-    })),
-  );
-  XLSX.utils.book_append_sheet(wb, wsReg, "Plus reguliers");
-  const wsAbs = XLSX.utils.json_to_sheet(
-    r.absents.map((x) => ({
-      Membre: fullName(x.membre),
-      Payes: x.paye,
-      Total: x.total,
-      "Taux (%)": Math.round(x.taux * 100),
-    })),
-  );
-  XLSX.utils.book_append_sheet(wb, wsAbs, "Plus absents");
-  const wsHist = XLSX.utils.json_to_sheet(
-    r.joursStats.map((j) => ({
-      Date: fmtDate(j.dimanche.date),
-      "Anniversaire(s)": j.beneficiaires.join(", "),
-      "Total collecte": j.totalCollecte,
-      Payants: j.nbPayants,
-      Total: j.nbTotal,
-    })),
-  );
-  XLSX.utils.book_append_sheet(wb, wsHist, "Historique");
-  xlsxDownload(wb, `m3d-rapport-${todayISO()}.xlsx`);
-  toast("Rapport Excel telecharge");
-}
-async function exportMembresExcel() {
-  if (typeof XLSX === "undefined") {
-    toast("Module Excel indisponible hors-ligne", "error");
-    return;
-  }
-  const membres = await listMembres();
-  const rows = membres.map((m) => ({
-    ID: m.id,
-    Nom: m.nom,
-    Prenom: m.prenom,
-    Anniversaire: m.jour_anniversaire
-      ? `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`
-      : "",
-    Telephone: m.telephone || "",
-    Fonction: m.fonction || "Membre",
-    "Cotisation hebdo (F)": m.cotisation_personnalisee || "Defaut",
-    Statut: m.statut,
-    "Date d'ajout": m.date_adhesion ? fmtDate(m.date_adhesion) : "",
-    Observations: m.observations || "",
-  }));
-  const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [
-    { wch: 8 },
-    { wch: 16 },
-    { wch: 16 },
-    { wch: 12 },
-    { wch: 14 },
-    { wch: 14 },
-    { wch: 16 },
-    { wch: 10 },
-    { wch: 12 },
-    { wch: 24 },
-  ];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Membres");
-  xlsxDownload(wb, `m3d-membres-${todayISO()}.xlsx`);
-  toast("Fichier Excel telecharge");
-}
-async function exportDettesExcel() {
-  if (typeof XLSX === "undefined") {
-    toast("Module Excel indisponible hors-ligne", "error");
-    return;
-  }
-  const dettes = await dettesList();
-  const rows = dettes.map((d) => ({
-    Membre: d.membre,
-    Date: fmtDate(d.date),
-    "Montant (F)": d.montant,
-    Statut: d.statut,
-  }));
-  const ws = XLSX.utils.json_to_sheet(rows);
-  ws["!cols"] = [{ wch: 20 }, { wch: 12 }, { wch: 12 }, { wch: 12 }];
-  const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, ws, "Dettes");
-  xlsxDownload(wb, `m3d-dettes-${todayISO()}.xlsx`);
-  toast("Fichier Excel telecharge");
-}
 async function exportRapportWord() {
   const [membres, joursStats, dettesTotal, solde] = await Promise.all([
     listMembres(),
@@ -2506,7 +2475,12 @@ async function exportRapportWord() {
   const blob = new Blob(["\ufeff", header + content + footer], {
     type: "application/msword",
   });
-  downloadFile(blob, `m3d-rapport-${todayISO()}.doc`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `m3d-rapport-${todayISO()}.doc`;
+  a.click();
+  URL.revokeObjectURL(url);
   toast("Rapport Word telecharge");
 }
 function openAddMouvement() {
@@ -2558,6 +2532,7 @@ async function exportBackup() {
     "parametres",
     "listes",
     "liste_membres",
+    "prets_membres",
   ];
   const data = {};
   for (const t of tables) data[t] = await db[t].toArray();
@@ -2571,7 +2546,12 @@ async function exportBackup() {
     ],
     { type: "application/json" },
   );
-  downloadFile(blob, `m3d-sauvegarde-${todayISO()}.json`);
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `m3d-sauvegarde-${todayISO()}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
   toast("Sauvegarde telechargee");
 }
 async function importBackup(e) {
@@ -2618,6 +2598,7 @@ async function importBackup(e) {
       "activity_log",
       "listes",
       "liste_membres",
+      "prets_membres",
     ];
     const tables = Object.keys(parsed.data).filter(
       (t) => KNOWN_TABLES.indexOf(t) !== -1 && Array.isArray(parsed.data[t]),

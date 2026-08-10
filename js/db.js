@@ -77,6 +77,25 @@ db.version(3).stores({
   listes: "id, nom, date, archivee",
   liste_membres: "id, id_liste, id_membre",
 });
+// Version 4 : ajout du suivi des "prets entre membres" (quand un membre
+// absent se fait avancer sa cotisation par un autre membre present). C'est
+// un pret PERSONNEL entre deux personnes, distinct des dettes du groupe :
+// cote groupe, la cotisation est consideree payee (a_paye=true) des que le
+// pret est enregistre. Aucune table existante n'est modifiee.
+db.version(4).stores({
+  membres: "id, nom, prenom, statut, mois_anniversaire",
+  sessions: "id, nom",
+  dimanches: "id, id_session, date, statut",
+  anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+  paiements: "id, id_dimanche, id_membre",
+  remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+  caisse_mouvements: "id, date, type",
+  parametres: "cle",
+  activity_log: "++seq, date, entite, action",
+  listes: "id, nom, date, archivee",
+  liste_membres: "id, id_liste, id_membre",
+  prets_membres: "id, id_dimanche, id_debiteur, id_preteur, rembourse",
+});
 // uid() : genere un identifiant unique. crypto.randomUUID() n'existe pas
 // avant Safari 15.4 (donc absent sur iOS 12, comme sur un iPad mini 2).
 // On utilise crypto.getRandomValues (supporte depuis Safari 6 / iOS 6.1)
@@ -526,6 +545,114 @@ async function marquerPaiement(idPaiement, aPaye) {
     montant_paye: aPaye ? p.montant_attendu : 0,
   });
   await log("paiement", aPaye ? "marque_paye" : "marque_non_paye", idPaiement);
+}
+
+// ------------------------------------------------------------------
+// PRETS ENTRE MEMBRES
+// ------------------------------------------------------------------
+// Cas d'usage : un membre est absent un dimanche, un autre membre present
+// avance sa cotisation pour lui. Cote GROUPE, la cotisation est consideree
+// payee immediatement (le groupe a bien recu son argent). Le pret est un
+// arrangement PERSONNEL entre les deux membres, suivi separement des
+// dettes du groupe.
+async function enregistrerPretMembre(idPaiement, idPreteur) {
+  const p = await db.paiements.get(idPaiement);
+  if (!p) return;
+  if (p.id_membre === idPreteur)
+    throw new Error("Un membre ne peut pas preter a lui-meme.");
+  await db.paiements.update(idPaiement, {
+    a_paye: true,
+    montant_paye: p.montant_attendu,
+  });
+  await db.prets_membres.add({
+    id: uid(),
+    id_dimanche: p.id_dimanche,
+    id_paiement: idPaiement,
+    id_debiteur: p.id_membre,
+    id_preteur: idPreteur,
+    montant: p.montant_attendu,
+    date: todayISO(),
+    rembourse: false,
+  });
+  await log("pret", "enregistre", idPaiement);
+}
+async function pretsMembres({ nonRembourseSeulement = false } = {}) {
+  let all = await db.prets_membres.toArray();
+  if (nonRembourseSeulement) all = all.filter((p) => !p.rembourse);
+  return all.sort((a, b) => b.date.localeCompare(a.date));
+}
+async function marquerPretRembourse(idPret, rembourse) {
+  await db.prets_membres.update(idPret, { rembourse });
+  await log("pret", rembourse ? "rembourse" : "remise_a_zero", idPret);
+}
+
+// ------------------------------------------------------------------
+// REGULARITE — signale un membre qui a rate ses 2 DERNIERES cotisations
+// (deux dimanches consecutifs non payes, ordre chronologique). Un pret
+// enregistre via enregistrerPretMembre() compte comme "paye" (a_paye
+// devient true), donc n'est jamais compte comme un rate.
+// ------------------------------------------------------------------
+async function membresIrreguliers() {
+  const membres = await db.membres.where("statut").equals("Actif").toArray();
+  const dimanches = (await db.dimanches.toArray()).sort((a, b) =>
+    a.date.localeCompare(b.date),
+  );
+  const irreguliers = [];
+  for (const m of membres) {
+    const historique = [];
+    for (const d of dimanches) {
+      const p = await db.paiements
+        .where("id_dimanche")
+        .equals(d.id)
+        .and((x) => x.id_membre === m.id)
+        .first();
+      if (p) historique.push(p.a_paye);
+    }
+    const n = historique.length;
+    if (n >= 2 && historique[n - 1] === false && historique[n - 2] === false) {
+      irreguliers.push(m.id);
+    }
+  }
+  return irreguliers;
+}
+
+// ------------------------------------------------------------------
+// Passage d'un membre en Inactif : efface ses dettes envers le groupe
+// (les lignes de paiement NON payees), mais conserve tout l'historique des
+// cotisations DEJA payees (rien n'est perdu de ce qui a reellement eu
+// lieu). Les prets ou il est PRETEUR (quelqu'un lui doit de l'argent) ne
+// sont pas touches, seuls ceux ou il est DEBITEUR et non rembourse sont
+// annules (il n'est plus tenu de rembourser un pret si on le sort du
+// systeme de cotisation).
+// ------------------------------------------------------------------
+async function passerMembreInactif(idMembre) {
+  const impayes = await db.paiements
+    .where("id_membre")
+    .equals(idMembre)
+    .and((p) => !p.a_paye)
+    .toArray();
+  await db.transaction(
+    "rw",
+    db.membres,
+    db.paiements,
+    db.prets_membres,
+    async () => {
+      for (const p of impayes) await db.paiements.delete(p.id);
+      const pretsEnCours = await db.prets_membres
+        .where("id_debiteur")
+        .equals(idMembre)
+        .and((pr) => !pr.rembourse)
+        .toArray();
+      for (const pr of pretsEnCours) await db.prets_membres.delete(pr.id);
+      await db.membres.update(idMembre, { statut: "Inactif" });
+    },
+  );
+  await log(
+    "membre",
+    "passe_inactif",
+    `${idMembre} — ${impayes.length} dette(s) effacee(s)`,
+  );
+  return impayes.length;
 }
 
 async function participantsDeLaSession(sessionId) {

@@ -2,7 +2,7 @@
 // fonctionner une fois installee. Le cache est mis a jour en arriere-plan
 // quand une connexion existe, sans jamais bloquer l'affichage hors-ligne.
 
-const CACHE_NAME = "m3d-cache-v11";
+const CACHE_NAME = "m3d-cache-v12";
 const ASSETS = [
   "./",
   "./index.html",
@@ -13,7 +13,6 @@ const ASSETS = [
   "./icons/icon-192.png",
   "./icons/icon-512.png",
   "https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js",
-  "https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js",
   "https://fonts.googleapis.com/css2?family=Sora:wght@600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700&display=swap",
 ];
 
