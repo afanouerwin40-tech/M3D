@@ -244,6 +244,7 @@ function showSetupScreen() {
     await setAdminPassword(pw);
     try {
       sessionStorage.setItem("m3d_authed", "1");
+      localStorage.setItem("m3d_auth_ts", Date.now().toString());
     } catch (e) {}
     el.remove();
     showTab("accueil");
@@ -268,6 +269,7 @@ function showLoginScreen() {
     }
     try {
       sessionStorage.setItem("m3d_authed", "1");
+      localStorage.setItem("m3d_auth_ts", Date.now().toString());
     } catch (e) {}
     el.remove();
     showTab("accueil");
@@ -359,6 +361,20 @@ function closeSheet() {
 // Navigation
 // ---------------------------------------------------------------
 async function showTab(tab) {
+  // Check if authentication has expired (5 minutes) on every tab change
+  try {
+    const authTs = localStorage.getItem("m3d_auth_ts");
+    if (authTs && (Date.now() - parseInt(authTs)) > 5 * 60 * 1000) { // 5 minutes in milliseconds
+      // Clear auth state
+      sessionStorage.removeItem("m3d_authed");
+      localStorage.removeItem("m3d_auth_ts");
+      showLoginScreen();
+      return;
+    }
+  } catch (e) {
+    // If there's an error checking the timestamp, proceed with authentication
+  }
+
   currentTab = tab;
   document
     .querySelectorAll(".tab")
@@ -2234,7 +2250,6 @@ async function renderPlus() {
       <button class="btn btn-ghost" id="exportDettesPdfBtn" style="margin-bottom:10px;">Dettes du groupe — PDF</button>
       <button class="btn btn-ghost" id="exportPretsPdfBtn" style="margin-bottom:10px;">Prets entre membres — PDF</button>
       <button class="btn btn-ghost" id="exportRapportPdfBtn" style="margin-bottom:10px;">Rapport complet — PDF</button>
-      <button class="btn btn-ghost" id="exportRapportDocBtn" style="margin-bottom:10px;">Rapport complet — Word (.doc)</button>
       <div class="small-note">Ces documents sont prets a etre envoyes ou imprimes depuis n'importe quelle application. Pour exporter une cotisation precise (un dimanche donne), ouvre-le depuis l'onglet Dimanches. Les prets entre membres sont exportes a part des dettes du groupe : ce sont deux choses differentes.</div>
     </div>
 
@@ -2321,9 +2336,6 @@ async function renderPlus() {
   document
     .getElementById("exportRapportPdfBtn")
     .addEventListener("click", exportRapportPDF);
-  document
-    .getElementById("exportRapportDocBtn")
-    .addEventListener("click", exportRapportWord);
   document
     .getElementById("resetAnnivBtn")
     .addEventListener("click", async () => {
@@ -2693,7 +2705,6 @@ async function exportRapportPDF() {
       .join("") ||
     `<tr><td colspan="3">Aucun membre a 40% de presence ou moins</td></tr>`;
   const histRows = r.joursStats
-    .slice(0, 20)
     .map(
       (j) =>
         `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`,
@@ -2957,5 +2968,20 @@ initTheme();
     showLoginScreen();
     return;
   }
+
+  // Check if authentication has expired (5 minutes)
+  try {
+    const authTs = localStorage.getItem("m3d_auth_ts");
+    if (authTs && (Date.now() - parseInt(authTs)) > 5 * 60 * 1000) { // 5 minutes in milliseconds
+      // Clear auth state
+      sessionStorage.removeItem("m3d_authed");
+      localStorage.removeItem("m3d_auth_ts");
+      showLoginScreen();
+      return;
+    }
+  } catch (e) {
+    // If there's an error checking the timestamp, proceed with authentication
+  }
+
   showTab("accueil");
 })();
