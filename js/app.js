@@ -8,6 +8,37 @@ const fmtDate = (iso) =>
     year: "numeric",
   });
 const fullName = (m) => (m.nom ? `${m.nom} ${m.prenom}` : m.prenom);
+
+// telechargerFichier() : point unique pour tous les exports (JSON, Word...).
+// Avant, target="_blank" etait force EN PERMANENCE "au cas ou" : gros bug,
+// car sur un navigateur qui supporte l'attribut "download" (Chrome, Firefox,
+// Safari >= 13 -- donc l'iPhone 8 / iPhone SE en iOS recent), le combo
+// target="_blank" + download fait que le navigateur ouvre juste un nouvel
+// onglet vide AU LIEU de telecharger : "download" est ignore. Ici on
+// detecte le vrai support ('download' in a renvoie false sur les Safari
+// anterieurs a la version 13, donc sur TOUT iOS 12, meme s'ils comprennent
+// l'attribut HTML) et on n'utilise le repli target="_blank" que si le
+// navigateur ne sait vraiment pas telecharger.
+function telechargerFichier(blob, nomFichier) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = nomFichier;
+  if (!("download" in a)) {
+    // Vieux Safari (< 13, tout iOS 12) : pas de support "download" ->
+    // ouvrir dans un nouvel onglet pour que l'app ne soit pas remplacee
+    // par le contenu brut. L'utilisateur sauvegarde ensuite via le bouton
+    // Partager de Safari > "Enregistrer dans Fichiers".
+    a.target = "_blank";
+    a.rel = "noopener";
+  }
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  // Delai avant revocation : la revoquer immediatement apres click() peut
+  // couper le telechargement en cours sur certains navigateurs.
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+}
 const initials = (m) =>
   (
     ((m.nom || m.prenom || "?")[0] || "?") + ((m.prenom || "")[0] || "")
@@ -2594,12 +2625,7 @@ async function exportRapportWord() {
   const blob = new Blob(["\ufeff", header + content + footer], {
     type: "application/msword",
   });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = `m3d-rapport-${todayISO()}.doc`;
-  a.click();
-  URL.revokeObjectURL(url);
+  telechargerFichier(blob, `m3d-rapport-${todayISO()}.doc`);
   toast("Rapport Word telecharge");
 }
 async function openAjusterCaisse() {
@@ -2691,25 +2717,7 @@ async function exportBackup() {
     ],
     { type: "application/json" },
   );
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  // target="_blank" : sur les navigateurs qui ne supportent pas l'attribut
-  // "download" (Safari avant la version 13, donc iOS 12), le clic navigue
-  // normalement au lieu de telecharger -- SANS ce target, ca remplacerait
-  // l'app elle-meme par le JSON brut affiche en texte (bug corrige ici).
-  // Avec target="_blank", ca s'ouvre dans un nouvel onglet : l'app reste
-  // intacte, et l'utilisateur peut sauver le fichier via le bouton Partager
-  // de Safari > "Enregistrer dans Fichiers" (JAMAIS "Creer un PDF" : ca
-  // changerait le format et l'import ne le reconnaitrait plus).
-  a.href = url;
-  a.download = `m3d-sauvegarde-${todayISO()}.json`;
-  a.target = "_blank";
-  a.rel = "noopener";
-  a.click();
-  // On ne revoque l'URL qu'apres un delai : la revoquer tout de suite apres
-  // click() pouvait couper le telechargement en cours sur certains
-  // navigateurs (bug corrige ici egalement).
-  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  telechargerFichier(blob, `m3d-sauvegarde-${todayISO()}.json`);
   await setParam("derniere_sauvegarde", new Date().toISOString());
   toast(
     "Sauvegarde prete. Si le fichier ne se telecharge pas tout seul, utilise le bouton Partager > Enregistrer dans Fichiers (pas 'Creer un PDF').",

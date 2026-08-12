@@ -264,9 +264,31 @@ html,body { overflow-x:hidden; }
 @supports not (gap: 1px) {
   .brand > * + * { margin-left:9px; }
   .row > * + * { margin-left:12px; }
+  .row .info > * + * { margin-top:2px; }
   .field-row > * + * { margin-left:10px; }
   .tag-row > * { margin-right:6px; margin-top:0; }
   .tab > * + * { margin-top:2px; }
   .donut-legend > * + * { margin-left:16px; }
   #toast-host > * + * { margin-top:8px; }
+  /* Elements oublies dans la premiere passe de repli (gap flexbox) */
+  .gsr-item > * + * { margin-left:10px; }
+  .chip-actions > * + * { margin-left:6px; }
+  .swatch-row > * { margin:0 8px 8px 0; }
+  .liste-card-top > * + * { margin-left:12px; }
+  .liste-detail-head > * + * { margin-left:12px; }
+  @media (min-width:900px) {
+    /* .tabbar desktop passe en colonne (icone+libelle empiles) */
+    .tabbar > * + * { margin-top:2px; }
+    /* .tab desktop passe en ligne (icone puis libelle cote a cote) */
+    .tab > * + * { margin-top:0; margin-left:12px; }
+  }
+}
+
+/* aspect-ratio n'est supporte qu'a partir de Safari 15 : sur un iPad sous
+   iOS 12, cette propriete est simplement ignoree et .kpi perd sa forme
+   carree (hauteur reduite au contenu). Ce n'est pas casse, juste moins
+   joli -- on force une hauteur minimale raisonnable pour rester coherent
+   visuellement avec le reste de l'interface. */
+@supports not (aspect-ratio: 1) {
+  .kpi { min-height:84px; }
 }

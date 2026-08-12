@@ -3,6 +3,30 @@
 // collectes. Dettes et le volet "collecte" de la Caisse ne sont JAMAIS
 // stockes : ils sont toujours recalcules a la volee depuis Paiements.
 
+// Polyfill Object.fromEntries : cette methode n'existe PAS sur Safari 12.0
+// (elle n'a ete ajoutee qu'en Safari 12.1). Comme certains vieux iPad
+// restent bloques en 12.0/12.1 selon le modele, on la definit nous-memes
+// si absente, plutot que de faire confiance a la version exacte du WebKit
+// de l'appareil. Utilisee 8 fois dans app.js/db.js -- sans ce polyfill,
+// chaque appel plante avec "Object.fromEntries is not a function".
+if (typeof Object.fromEntries !== "function") {
+  Object.fromEntries = function (entries) {
+    var obj = {};
+    var iter = entries;
+    // entries peut etre un Map (via .map()) ou un tableau de paires
+    if (typeof iter.forEach === "function") {
+      iter.forEach(function (pair) {
+        obj[pair[0]] = pair[1];
+      });
+    } else {
+      for (var i = 0; i < iter.length; i++) {
+        obj[iter[i][0]] = iter[i][1];
+      }
+    }
+    return obj;
+  };
+}
+
 const db = new Dexie("m3d_db");
 
 db.version(1).stores({
@@ -753,11 +777,16 @@ async function membresIrreguliers() {
   for (const m of membres) {
     const historique = (paiementsParMembre.get(m.id) || [])
       .slice()
-      .sort(
-        (a, b) =>
-          (ordreDim.get(a.id_dimanche) ?? 0) -
-          (ordreDim.get(b.id_dimanche) ?? 0),
-      );
+      .sort((a, b) => {
+        // Remplace l'operateur "??" (non supporte par Safari avant la
+        // version 13.1, donc absent sur TOUT iOS 12) par un ternaire
+        // equivalent. Sur Safari 12, "??" provoque une SyntaxError qui
+        // empeche l'execution de CE FICHIER ENTIER (db.js), donc casse
+        // toute l'app au chargement -- pas juste cette fonction.
+        const oa = ordreDim.get(a.id_dimanche);
+        const ob = ordreDim.get(b.id_dimanche);
+        return (oa !== undefined ? oa : 0) - (ob !== undefined ? ob : 0);
+      });
     const n = historique.length;
     if (
       n >= 2 &&
