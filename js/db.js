@@ -247,6 +247,7 @@ async function dettesList() {
       membre: memById[p.id_membre]
         ? `${memById[p.id_membre].nom} ${memById[p.id_membre].prenom}`.trim()
         : "?",
+      telephone: memById[p.id_membre] ? memById[p.id_membre].telephone : "",
       date: dim ? dim.date : "?",
       montant: p.montant_attendu,
       statut: rembourse ? "Remboursee" : "Impayee",
@@ -307,6 +308,27 @@ async function caisseDetail() {
     solde,
     dettesImpayees,
   };
+}
+
+// ajusterCaisse : reconciliation. L'utilisateur indique le montant qu'il a
+// REELLEMENT en main ; on cree un mouvement d'ajustement (Entree ou Sortie)
+// pour combler l'ecart avec le solde calcule, de sorte que le solde
+// affiche devienne exactement ce montant. L'historique n'est jamais
+// efface : on ajoute une ligne tracee, on ne supprime rien (piste d'audit
+// conservee).
+async function ajusterCaisse(montantReel) {
+  const avant = await caisseDetail();
+  const ecart = montantReel - avant.solde;
+  if (ecart === 0) return { ecart: 0 };
+  await db.caisse_mouvements.add({
+    id: uid(),
+    date: todayISO(),
+    type: ecart > 0 ? "Entree" : "Sortie",
+    montant: Math.abs(ecart),
+    libelle: `Ajustement caisse (solde reel : ${montantReel} F)`,
+  });
+  await log("caisse", "ajustement", `${avant.solde} F -> ${montantReel} F`);
+  return { ecart };
 }
 
 async function joursAvecStats() {
@@ -592,28 +614,110 @@ async function marquerPretRembourse(idPret, rembourse) {
 // enregistre via enregistrerPretMembre() compte comme "paye" (a_paye
 // devient true), donc n'est jamais compte comme un rate.
 // ------------------------------------------------------------------
-async function membresIrreguliers() {
-  const membres = await db.membres.where("statut").equals("Actif").toArray();
+// historiquePaiementsMembre : chronologie complete (paye/non paye) d'un
+// membre sur tous les dimanches ou il avait une ligne de paiement. Utilisee
+// par la fiche membre (timeline) et par membresIrreguliers().
+async function historiquePaiementsMembre(idMembre) {
   const dimanches = (await db.dimanches.toArray()).sort((a, b) =>
     a.date.localeCompare(b.date),
   );
+  const out = [];
+  for (const d of dimanches) {
+    const p = await db.paiements
+      .where("id_dimanche")
+      .equals(d.id)
+      .and((x) => x.id_membre === idMembre)
+      .first();
+    if (!p) continue;
+    const anniv = await db.anniversaires_du_jour
+      .where("id_dimanche")
+      .equals(d.id)
+      .toArray();
+    const membres = await db.membres.bulkGet(
+      anniv.map((a) => a.id_membre_fete),
+    );
+    const beneficiaires = membres
+      .filter(Boolean)
+      .map((m) => `${m.nom} ${m.prenom}`);
+    out.push({
+      date: d.date,
+      a_paye: p.a_paye,
+      montant_attendu: p.montant_attendu,
+      beneficiaires,
+    });
+  }
+  return out;
+}
+
+async function membresIrreguliers() {
+  const membres = await db.membres.where("statut").equals("Actif").toArray();
   const irreguliers = [];
   for (const m of membres) {
-    const historique = [];
-    for (const d of dimanches) {
-      const p = await db.paiements
-        .where("id_dimanche")
-        .equals(d.id)
-        .and((x) => x.id_membre === m.id)
-        .first();
-      if (p) historique.push(p.a_paye);
-    }
+    const historique = await historiquePaiementsMembre(m.id);
     const n = historique.length;
-    if (n >= 2 && historique[n - 1] === false && historique[n - 2] === false) {
+    if (
+      n >= 2 &&
+      historique[n - 1].a_paye === false &&
+      historique[n - 2].a_paye === false
+    ) {
       irreguliers.push(m.id);
     }
   }
   return irreguliers;
+}
+
+// membresARelancer : liste d'action combinant deux causes -- une dette
+// envers le groupe, et/ou 2 cotisations manquees d'affilee (irregulier).
+// Un meme membre peut cumuler les deux raisons.
+async function membresARelancer() {
+  const [dettes, irreguliersIds] = await Promise.all([
+    dettesList(),
+    membresIrreguliers(),
+  ]);
+  const dettesImpayees = dettes.filter((d) => d.statut === "Impayee");
+  const parMembre = new Map();
+  for (const d of dettesImpayees) {
+    const key = d.id_membre;
+    if (!parMembre.has(key))
+      parMembre.set(key, {
+        id_membre: key,
+        nom: d.membre,
+        telephone: d.telephone,
+        montantDette: 0,
+        irregulier: false,
+      });
+    parMembre.get(key).montantDette += d.montant;
+  }
+  for (const id of irreguliersIds) {
+    if (!parMembre.has(id)) {
+      const m = await db.membres.get(id);
+      if (!m) continue;
+      parMembre.set(id, {
+        id_membre: id,
+        nom: `${m.nom} ${m.prenom}`,
+        telephone: m.telephone,
+        montantDette: 0,
+        irregulier: true,
+      });
+    } else {
+      parMembre.get(id).irregulier = true;
+    }
+  }
+  return Array.from(parMembre.values()).sort((a, b) =>
+    a.nom.localeCompare(b.nom),
+  );
+}
+
+// Garde anti-doublon : renvoie le dimanche existant a cette date (session
+// active), ou null si la date est libre.
+async function dimancheExisteADate(date) {
+  const sessionId = await getOrCreateSessionActive();
+  const existant = await db.dimanches
+    .where("id_session")
+    .equals(sessionId)
+    .and((d) => d.date === date)
+    .first();
+  return existant || null;
 }
 
 // ------------------------------------------------------------------
@@ -680,7 +784,17 @@ async function participantsDeLaSession(sessionId) {
     const ps = await db.paiements.where("id_dimanche").equals(d.id).toArray();
     ps.forEach((p) => ids.add(p.id_membre));
   }
-  return Array.from(ids);
+  // Filtre de securite : meme si un membre a un historique de paiement, il
+  // ne doit JAMAIS reapparaitre dans un nouveau dimanche si son statut
+  // ACTUEL est "Inactif" (bug corrige : avant, seul le tout premier
+  // dimanche verifiait le statut -- un membre passe Inactif en cours de
+  // route continuait a apparaitre indefiniment sur les dimanches suivants).
+  const actifsIds = new Set(
+    (await db.membres.where("statut").equals("Actif").toArray()).map(
+      (m) => m.id,
+    ),
+  );
+  return Array.from(ids).filter((id) => actifsIds.has(id));
 }
 
 async function nouveauDimanche({ date, beneficiaireIds }) {
@@ -861,6 +975,7 @@ async function membresDeListe(idListe) {
             ...memById[ins.id_membre],
             _inscriptionId: ins.id,
             presence: ins.presence || "attente",
+            paye: !!ins.paye,
           }
         : null,
     )
@@ -879,6 +994,7 @@ async function ajouterMembreListe(idListe, idMembre) {
     id_liste: idListe,
     id_membre: idMembre,
     presence: "attente",
+    paye: false,
   });
   await log("liste", "membre_ajoute", `${idListe}:${idMembre}`);
 }
@@ -898,6 +1014,18 @@ async function definirPresenceListe(idListe, idMembre, presence) {
     .first();
   if (!row) return;
   await db.liste_membres.update(row.id, { presence });
+}
+// definirPaiementListe : suivi du paiement de la participation demandee
+// (liste.montant_demande), independant de la presence. Utile pour une
+// sortie/un camp payant ou l'on veut savoir qui a regle sa part.
+async function definirPaiementListe(idListe, idMembre, paye) {
+  const row = await db.liste_membres
+    .where("id_liste")
+    .equals(idListe)
+    .and((x) => x.id_membre === idMembre)
+    .first();
+  if (!row) return;
+  await db.liste_membres.update(row.id, { paye });
 }
 
 // ---------------------------------------------------------------

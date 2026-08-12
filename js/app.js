@@ -475,17 +475,54 @@ async function runGlobalSearch(qRaw, box) {
   );
 }
 
+function openARelancerSheet(liste) {
+  openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>A relancer</h3>
+    <div class="small-note" style="margin-bottom:12px;">Membres avec une dette envers le groupe et/ou 2 cotisations manquees d'affilee.</div>
+    <div id="relancer_list"></div>
+  `);
+  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  const box = document.getElementById("relancer_list");
+  box.innerHTML = liste.length
+    ? liste
+        .map(
+          (x) => `
+    <div class="row" style="cursor:default;">
+      <div class="avatar">${(x.nom[0] || "?").toUpperCase()}</div>
+      <div class="info">
+        <div class="name">${esc(x.nom)}</div>
+        <div class="meta">${[x.montantDette > 0 ? `Dette ${fmt(x.montantDette)}` : "", x.irregulier ? "Irregulier" : ""].filter(Boolean).join(" &middot; ")}</div>
+      </div>
+      ${x.telephone ? `<a href="tel:${esc(x.telephone)}" class="badge badge-yes" style="text-decoration:none;">Appeler</a>` : ""}
+    </div>`,
+        )
+        .join("")
+    : emptyHTML("Personne a relancer, tout le monde est a jour !");
+}
+
 async function renderAccueil() {
-  const [membres, joursStats, dettesTotal, solde, prochains, listes, activite] =
-    await Promise.all([
-      listMembres(),
-      joursAvecStats(),
-      totalDettesImpayees(),
-      caisseSolde(),
-      prochainAnniversaire(),
-      listesAll({ archiveesSeulement: false }),
-      db.activity_log.orderBy("seq").reverse().limit(6).toArray(),
-    ]);
+  const [
+    membres,
+    joursStats,
+    dettesTotal,
+    solde,
+    prochains,
+    listes,
+    irreguliersIds,
+    pretsEnAttente,
+    derniereSauvegarde,
+  ] = await Promise.all([
+    listMembres(),
+    joursAvecStats(),
+    totalDettesImpayees(),
+    caisseSolde(),
+    prochainAnniversaire(),
+    listesAll({ archiveesSeulement: false }),
+    membresIrreguliers(),
+    pretsMembres({ nonRembourseSeulement: true }),
+    getParam("derniere_sauvegarde", null),
+  ]);
   const sessionId = await getParam("session_active");
   const participantsCount = (
     await Promise.all(membres.map((m) => isParticipant(m.id, sessionId)))
@@ -495,20 +532,41 @@ async function renderAccueil() {
   const mois = now.getMonth() + 1;
   const membresMois = await membresAnniversaireCeMoisRestants(mois);
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const aRelancer = await membresARelancer();
+
+  // Rappel de sauvegarde : la seule copie des donnees vit sur cet appareil.
+  // Pas de sauvegarde recente = risque de tout perdre si le telephone est
+  // perdu/casse/vole. On alerte au-dela de 14 jours (ou si jamais faite).
+  const joursDepuisSauvegarde = derniereSauvegarde
+    ? Math.floor((now - new Date(derniereSauvegarde)) / 86400000)
+    : null;
+  const sauvegardeAlerte =
+    joursDepuisSauvegarde === null || joursDepuisSauvegarde > 14;
 
   app.innerHTML = `
     <div class="search-wrap" style="position:relative;">
       <input class="search" id="globalSearch" placeholder="Rechercher un membre, une liste, une cotisation...">
       <div id="globalSearchResults" class="global-search-results"></div>
     </div>
+    ${
+      sauvegardeAlerte
+        ? `
+    <div class="card" id="backupWarnBox" style="margin-bottom:16px;background:var(--bg-warning);border-color:transparent;cursor:pointer;">
+      <div class="detail-row" style="border:none;padding:0;"><span class="k" style="color:var(--warning);font-weight:600;">${derniereSauvegarde ? `Derniere sauvegarde il y a ${joursDepuisSauvegarde} jours` : "Aucune sauvegarde n'a jamais ete faite"}</span></div>
+      <div class="small-note" style="margin-top:4px;">Toutes les donnees ne vivent que sur cet appareil. Touche ici pour exporter une sauvegarde JSON maintenant.</div>
+    </div>`
+        : ""
+    }
     <div class="kpi-grid">
       <div class="kpi k-navy"><div class="lbl">Membres</div><div class="val">${membres.length}</div></div>
       <div class="kpi k-blue"><div class="lbl">Cotisants</div><div class="val">${participantsCount}</div></div>
-      <div class="kpi k-green"><div class="lbl">Total collecte</div><div class="val">${fmt(totalCollecte)}</div></div>
-      <div class="kpi k-purple"><div class="lbl">Dimanches faits</div><div class="val">${joursStats.length}</div></div>
-      <div class="kpi k-teal"><div class="lbl">Solde caisse</div><div class="val">${fmt(solde)}</div></div>
-      <div class="kpi k-red"><div class="lbl">Dettes impayees</div><div class="val">${fmt(dettesTotal)}</div></div>
-      <div class="kpi k-purple"><div class="lbl">Listes actives</div><div class="val">${listes.length}</div></div>
+      <div class="kpi k-purple"><div class="lbl">Dimanches</div><div class="val">${joursStats.length}</div></div>
+      <div class="kpi k-teal"><div class="lbl">Solde</div><div class="val" style="font-size:14.5px;">${fmt(solde)}</div></div>
+      <div class="kpi k-red"><div class="lbl">Dettes</div><div class="val" style="font-size:14.5px;">${fmt(dettesTotal)}</div></div>
+      <div class="kpi k-purple"><div class="lbl">Listes</div><div class="val">${listes.length}</div></div>
+      <div class="kpi k-red clickable" id="kpiIrreguliers"><div class="lbl">Irreguliers</div><div class="val">${irreguliersIds.length}</div></div>
+      <div class="kpi k-amber clickable" id="kpiPrets"><div class="lbl">Prets en attente</div><div class="val">${pretsEnAttente.length}</div></div>
+      <div class="kpi k-navy clickable" id="kpiRelancer"><div class="lbl">A relancer</div><div class="val">${aRelancer.length}</div></div>
     </div>
 
     <div class="section-title"><h2>Anniversaires de ${MOIS_NOMS[mois - 1]}</h2></div>
@@ -536,21 +594,22 @@ async function renderAccueil() {
 
     <div class="section-title"><h2>Recapitulatif des dernieres collectes</h2></div>
     <div id="dash-weeks"></div>
-
-    <div class="section-title"><h2>Activite recente</h2></div>
-    <div class="card list-card" id="activiteBox" style="margin-bottom:22px;"></div>
-
   `;
 
-  document.getElementById("activiteBox").innerHTML =
-    activite
-      .map(
-        (a) => `
-    <div class="row" style="cursor:default;">
-      <div class="info"><div class="name">${activityLabel(a)}</div><div class="meta">${new Date(a.date).toLocaleString("fr-FR")}</div></div>
-    </div>`,
-      )
-      .join("") || emptyHTML("Aucune activite recente.");
+  const backupWarnBox = document.getElementById("backupWarnBox");
+  if (backupWarnBox)
+    backupWarnBox.addEventListener("click", () => showTab("plus"));
+  document
+    .getElementById("kpiIrreguliers")
+    .addEventListener("click", () =>
+      openARelancerSheet(aRelancer.filter((x) => x.irregulier)),
+    );
+  document
+    .getElementById("kpiPrets")
+    .addEventListener("click", () => renderPretsMembres());
+  document
+    .getElementById("kpiRelancer")
+    .addEventListener("click", () => openARelancerSheet(aRelancer));
 
   wireGlobalSearch();
 
@@ -986,6 +1045,7 @@ async function openMemberDetail(id) {
     <div class="detail-row"><span class="k">Participe (session active)</span><span class="v">${part ? "Oui" : "Non"}</span></div>
     <div class="detail-row"><span class="k">Dettes en cours</span><span class="v">${fmt(dettesTot)}</span></div>
     <div class="sheet-actions">
+      <button class="btn btn-ghost" id="historiqueBtn" style="margin-bottom:8px;">Voir l'historique des cotisations</button>
       <button class="btn btn-ghost" id="editMemberBtn" style="margin-bottom:8px;">Modifier fonction / cotisation</button>
       <button class="btn btn-ghost" id="toggleStatutBtn">${m.statut === "Actif" ? "Marquer inactif" : "Reactiver"}</button>
     </div>
@@ -994,18 +1054,53 @@ async function openMemberDetail(id) {
   document
     .getElementById("toggleStatutBtn")
     .addEventListener("click", async () => {
-      await db.membres.update(id, {
-        statut: m.statut === "Actif" ? "Inactif" : "Actif",
-      });
-      await log("membre", "statut_modifie", id);
-      closeSheet();
-      toast("Statut mis a jour");
+      if (m.statut === "Actif") {
+        const nbEffacees = await passerMembreInactif(id);
+        closeSheet();
+        toast(
+          nbEffacees > 0
+            ? `Membre passe Inactif — ${nbEffacees} dette(s) effacee(s)`
+            : "Membre passe Inactif",
+        );
+      } else {
+        await db.membres.update(id, { statut: "Actif" });
+        await log("membre", "statut_modifie", id);
+        closeSheet();
+        toast("Membre reactive");
+      }
       renderMemberList();
     });
   document.getElementById("editMemberBtn").addEventListener("click", () => {
     closeSheet();
     setTimeout(() => openEditMember(m), 200);
   });
+  document
+    .getElementById("historiqueBtn")
+    .addEventListener("click", () => openHistoriqueMembre(m));
+}
+async function openHistoriqueMembre(m) {
+  const historique = await historiquePaiementsMembre(m.id);
+  openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>Historique — ${esc(fullName(m))}</h3>
+    <div class="small-note" style="margin-bottom:12px;">${historique.length} dimanche(s) ou ${esc(m.prenom)} etait attendu(e).</div>
+    <div id="histo_list"></div>
+  `);
+  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  const box = document.getElementById("histo_list");
+  box.innerHTML = historique.length
+    ? historique
+        .slice()
+        .reverse()
+        .map(
+          (h) => `
+    <div class="detail-row">
+      <span class="k">${fmtDate(h.date)}${h.beneficiaires.length ? ` <span class="small-note" style="display:inline;">(${esc(h.beneficiaires.join(", "))})</span>` : ""}</span>
+      <span class="v" style="color:${h.a_paye ? "var(--success)" : "var(--danger)"};">${h.a_paye ? "Paye" : "Non paye"}</span>
+    </div>`,
+        )
+        .join("")
+    : emptyHTML("Aucun dimanche enregistre pour ce membre pour l'instant.");
 }
 function openEditMember(m) {
   openSheet(`
@@ -1211,6 +1306,16 @@ async function openNewSunday() {
       if (!date) {
         toast("Choisis une date", "error");
         return;
+      }
+      const existant = await dimancheExisteADate(date);
+      if (existant) {
+        const continuer = confirm(
+          `Un dimanche existe deja a cette date (${fmtDate(date)}). Creer quand meme un 2e dimanche a la meme date ?`,
+        );
+        if (!continuer) {
+          toast("Dimanche non cree — ouvre plutot celui qui existe deja");
+          return;
+        }
       }
       const benef = Array.from(
         document.getElementById("nd_benef").selectedOptions,
@@ -1694,10 +1799,11 @@ async function renderListesList() {
     filtered.map(async (l) => {
       const membres = await membresDeListe(l.id);
       const presents = membres.filter((m) => m.presence === "present").length;
+      const payes = membres.filter((m) => m.paye).length;
       return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${l.couleur};">
       <div class="liste-card-top">
         <span class="liste-icon" style="background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone)}</span>
-        <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}</div></div>
+        <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}${l.montant_demande ? ` &middot; ${payes} paye${payes > 1 ? "s" : ""}` : ""}</div></div>
       </div>
       ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
     </div>`;
@@ -1783,6 +1889,7 @@ async function renderListeDetailSheet(id) {
   const membres = await membresDeListe(id);
   const presents = membres.filter((m) => m.presence === "present").length;
   const absents = membres.filter((m) => m.presence === "absent").length;
+  const payes = membres.filter((m) => m.paye).length;
 
   const html = `
     <button class="sheet-close" data-close>&times;</button>
@@ -1794,6 +1901,7 @@ async function renderListeDetailSheet(id) {
     <div class="detail-row"><span class="k">Membres inscrits</span><span class="v">${membres.length}</span></div>
     <div class="detail-row"><span class="k">Presents</span><span class="v">${presents}</span></div>
     <div class="detail-row"><span class="k">Absents</span><span class="v">${absents}</span></div>
+    ${l.montant_demande ? `<div class="detail-row"><span class="k">Ont paye leur participation</span><span class="v">${payes} / ${membres.length}</span></div>` : ""}
     ${l.montant_demande ? `<div class="detail-row"><span class="k">Montant demande</span><span class="v">${fmt(l.montant_demande)}</span></div>` : ""}
     ${l.notes ? `<div class="detail-row"><span class="k">Notes</span><span class="v">${esc(l.notes)}</span></div>` : ""}
 
@@ -1881,6 +1989,7 @@ async function renderListeDetailSheet(id) {
 async function refreshListeDetailBody(id) {
   const ov = sheetStack[sheetStack.length - 1];
   if (!ov || ov.dataset.listeId !== id) return;
+  const l = await db.listes.get(id);
   const membres = await membresDeListe(id);
   const q = listeDetailQuery.trim().toLowerCase();
 
@@ -1943,6 +2052,7 @@ async function refreshListeDetailBody(id) {
           (m) => `
     <div class="chip-row" data-membre="${m.id}">
       <span class="name">${esc(fullName(m))}</span>
+      ${l.montant_demande ? `<button class="btn-chip ${m.paye ? "active" : ""}" data-paye="${m.id}" style="margin-right:4px;">${m.paye ? "Paye" : "Non paye"}</button>` : ""}
       <button class="toggle ${m.presence === "present" ? "on" : m.presence === "absent" ? "off" : "wait"}" data-presence="${m.id}">${m.presence === "present" ? "Present" : m.presence === "absent" ? "Absent" : "En attente"}</button>
       <button class="chip-remove" data-remove="${m.id}" aria-label="Retirer">&times;</button>
     </div>`,
@@ -1964,6 +2074,14 @@ async function refreshListeDetailBody(id) {
             ? "absent"
             : "attente";
       await definirPresenceListe(id, mid, next);
+      refreshListeDetailBody(id);
+    }),
+  );
+  membersBox.querySelectorAll("[data-paye]").forEach((btn) =>
+    btn.addEventListener("click", async () => {
+      const mid = btn.dataset.paye;
+      const cur = membres.find((m) => m.id === mid).paye;
+      await definirPaiementListe(id, mid, !cur);
       refreshListeDetailBody(id);
     }),
   );
@@ -1989,19 +2107,23 @@ async function exportListePDF(id) {
   const rows = membres
     .map(
       (m) =>
-        `<tr><td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td><td>${presenceLabel[m.presence]}</td></tr>`,
+        `<tr><td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td><td>${presenceLabel[m.presence]}</td>${l.montant_demande ? `<td>${m.paye ? "Paye" : "Non paye"}</td>` : ""}</tr>`,
     )
     .join("");
+  const payes = membres.filter((m) => m.paye).length;
   const body = `
     <h1>${esc(l.nom)}</h1>
     <div class="meta">${fmtDate(l.date)}${l.description ? " &middot; " + esc(l.description) : ""}</div>
-    <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Presence</th></tr>${rows || `<tr><td colspan="4">Aucun membre inscrit</td></tr>`}</table>
+    <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Presence</th>${l.montant_demande ? "<th>Paiement</th>" : ""}</tr>${rows || `<tr><td colspan="${l.montant_demande ? 5 : 4}">Aucun membre inscrit</td></tr>`}</table>
     <h2>Recapitulatif</h2>
     <table>
       <tr><th>Total inscrits</th><td>${membres.length}</td></tr>
       <tr><th>Presents</th><td>${membres.filter((m) => m.presence === "present").length}</td></tr>
       <tr><th>Absents</th><td>${membres.filter((m) => m.presence === "absent").length}</td></tr>
       ${l.montant_demande ? `<tr><th>Montant demande (par personne)</th><td>${fmt(l.montant_demande)}</td></tr>` : ""}
+      ${l.montant_demande ? `<tr><th>Ont paye</th><td>${payes} / ${membres.length}</td></tr>` : ""}
+      ${l.montant_demande ? `<tr><th>Total attendu</th><td>${fmt(l.montant_demande * membres.length)}</td></tr>` : ""}
+      ${l.montant_demande ? `<tr><th>Total deja recu</th><td>${fmt(l.montant_demande * payes)}</td></tr>` : ""}
       <tr><th>Date d'impression</th><td>${fmtDate(todayISO())}</td></tr>
     </table>
     ${l.notes ? `<h2>Notes</h2><p>${esc(l.notes)}</p>` : ""}
@@ -2057,7 +2179,8 @@ async function renderPlus() {
       <div class="detail-row" style="border:none;padding:0;"><span class="k" style="color:var(--warning);">Dettes impayees (non incluses ci-dessus)</span><span class="v" style="color:var(--warning);">${fmt(cd.dettesImpayees)}</span></div>
       <div class="small-note" style="margin-top:6px;">Cet argent n'est pas encore dans la caisse : il correspond aux cotisations encore dues par des membres. Des qu'un membre paie sa dette, elle bascule automatiquement en "Cotisations encaissees" ci-dessus.</div>
     </div>
-    <button class="btn btn-ghost" id="addMouvBtn" style="margin-bottom:18px;">+ Mouvement manuel (achat, depense...)</button>
+    <button class="btn btn-ghost" id="addMouvBtn" style="margin-bottom:10px;">+ Mouvement manuel (achat, depense...)</button>
+    <button class="btn btn-ghost" id="ajusterCaisseBtn" style="margin-bottom:18px;">Ajuster la caisse (montant reel en main)</button>
     <div class="card list-card" id="mouvList" style="margin-bottom:24px;"></div>
 
     <div class="section-title"><h2>Parametres</h2></div>
@@ -2132,6 +2255,9 @@ async function renderPlus() {
   document
     .getElementById("addMouvBtn")
     .addEventListener("click", openAddMouvement);
+  document
+    .getElementById("ajusterCaisseBtn")
+    .addEventListener("click", openAjusterCaisse);
   document
     .getElementById("saveParamsBtn")
     .addEventListener("click", async () => {
@@ -2483,6 +2609,32 @@ async function exportRapportWord() {
   URL.revokeObjectURL(url);
   toast("Rapport Word telecharge");
 }
+async function openAjusterCaisse() {
+  const cd = await caisseDetail();
+  openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>Ajuster la caisse</h3>
+    <div class="small-note" style="margin-bottom:12px;">Solde calcule actuellement : <b>${fmt(cd.solde)}</b>. Indique le montant que tu as REELLEMENT en main : l'app ajoutera automatiquement un mouvement pour combler l'ecart, sans rien effacer de l'historique.</div>
+    <div class="field"><label>Montant reel en main (FCFA)</label><input id="aj_montant" type="number" value="${cd.solde}"></div>
+    <button class="btn btn-primary" id="aj_save">Ajuster</button>
+  `);
+  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  document.getElementById("aj_save").addEventListener("click", async () => {
+    const montant = Number(document.getElementById("aj_montant").value);
+    if (isNaN(montant)) {
+      toast("Montant invalide", "error");
+      return;
+    }
+    const { ecart } = await ajusterCaisse(montant);
+    closeSheet();
+    toast(
+      ecart === 0
+        ? "Deja a jour, aucun ajustement necessaire"
+        : `Caisse ajustee (${ecart > 0 ? "+" : ""}${fmt(ecart)})`,
+    );
+    renderPlus();
+  });
+}
 function openAddMouvement() {
   openSheet(`
     <button class="sheet-close" data-close>&times;</button>
@@ -2548,11 +2700,27 @@ async function exportBackup() {
   );
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
+  // target="_blank" : sur les navigateurs qui ne supportent pas l'attribut
+  // "download" (Safari avant la version 13, donc iOS 12), le clic navigue
+  // normalement au lieu de telecharger -- SANS ce target, ca remplacerait
+  // l'app elle-meme par le JSON brut affiche en texte (bug corrige ici).
+  // Avec target="_blank", ca s'ouvre dans un nouvel onglet : l'app reste
+  // intacte, et l'utilisateur peut sauver le fichier via le bouton Partager
+  // de Safari > "Enregistrer dans Fichiers" (JAMAIS "Creer un PDF" : ca
+  // changerait le format et l'import ne le reconnaitrait plus).
   a.href = url;
   a.download = `m3d-sauvegarde-${todayISO()}.json`;
+  a.target = "_blank";
+  a.rel = "noopener";
   a.click();
-  URL.revokeObjectURL(url);
-  toast("Sauvegarde telechargee");
+  // On ne revoque l'URL qu'apres un delai : la revoquer tout de suite apres
+  // click() pouvait couper le telechargement en cours sur certains
+  // navigateurs (bug corrige ici egalement).
+  setTimeout(() => URL.revokeObjectURL(url), 60000);
+  await setParam("derniere_sauvegarde", new Date().toISOString());
+  toast(
+    "Sauvegarde prete. Si le fichier ne se telecharge pas tout seul, utilise le bouton Partager > Enregistrer dans Fichiers (pas 'Creer un PDF').",
+  );
 }
 async function importBackup(e) {
   const file = e.target.files[0];
