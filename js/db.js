@@ -1217,12 +1217,25 @@ async function rapportStats() {
       paye: c.paye,
       total: c.total,
     }));
+  // AVANT : plusReguliers et absents venaient du MEME classement (le meme
+  // tableau "regularite"), juste trie dans un sens puis dans l'autre, avec
+  // un simple "top 10" de chaque cote. Probleme : avec peu de membres ayant
+  // assez d'historique, un membre plutot regulier (ex. 65% de presence)
+  // pouvait finir dans le "top 10 des plus absents" simplement parce qu'il
+  // etait en bas du classement -- alors qu'il n'est pas vraiment absent.
+  // MAINTENANT : deux seuils clairs et INDEPENDANTS. Un membre n'apparait
+  // dans "les plus reguliers" que s'il a un taux de presence >= 80%, et
+  // dans "les plus absents" que s'il a un taux <= 40%. Un membre "moyen"
+  // (entre les deux) n'apparait dans aucune des deux listes -- c'est
+  // volontaire : il n'est ni notablement regulier, ni notablement absent.
+  const SEUIL_REGULIER = 0.8;
+  const SEUIL_ABSENT = 0.4;
   const plusReguliers = regularite
-    .filter((r) => r.total >= 2)
+    .filter((r) => r.total >= 2 && r.taux >= SEUIL_REGULIER)
     .sort((a, b) => b.taux - a.taux || b.total - a.total)
     .slice(0, 10);
   const absents = regularite
-    .filter((r) => r.total >= 2)
+    .filter((r) => r.total >= 2 && r.taux <= SEUIL_ABSENT)
     .sort((a, b) => a.taux - b.taux || b.total - a.total)
     .slice(0, 10);
 

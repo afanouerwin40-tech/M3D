@@ -2431,22 +2431,71 @@ async function exportMembresPDF() {
   if (win) writePrintableDocument(win, "Membres — M3D", body);
 }
 
+// grouperParMembreHTML() : meme procede utilise partout ou on liste des
+// montants lies a des membres (dettes du groupe, prets entre membres...) :
+// une section par membre avec son nom, son sous-total, puis le detail
+// (lignes individuelles) en dessous -- plutot qu'une seule grande liste
+// plate ou tout est melange entre membres.
+// - items : tableau d'objets a regrouper
+// - cleGroupe : champ utilise pour regrouper (ex. "id_membre")
+// - nomEtSousTitre(items) : renvoie { nom, sousTitre } pour l'entete de section
+// - montant(item) : renvoie le montant d'une ligne (pour le sous-total)
+// - ligneDetail(item) : renvoie le HTML <tr> d'une ligne de detail
+// - enteteDetail : HTML des <th> de la table de detail
+function grouperParMembreHTML(
+  items,
+  cleGroupe,
+  nomEtSousTitre,
+  montant,
+  ligneDetail,
+  enteteDetail,
+) {
+  const groupes = Array.from(groupBy(items, cleGroupe).values())
+    .map((liste) => {
+      const { nom, sousTitre } = nomEtSousTitre(liste);
+      return {
+        nom,
+        sousTitre,
+        sousTotal: liste.reduce((a, it) => a + montant(it), 0),
+        detail: liste
+          .slice()
+          .sort((a, b) => (a.date || "").localeCompare(b.date || "")),
+      };
+    })
+    // Plus grosse somme en premier
+    .sort((a, b) => b.sousTotal - a.sousTotal);
+
+  const html =
+    groupes
+      .map(
+        (g) => `
+    <h2>${esc(g.nom)}${g.sousTitre ? ` &middot; ${esc(g.sousTitre)}` : ""} — Total : ${fmt(g.sousTotal)}</h2>
+    <table><tr>${enteteDetail}</tr>${g.detail.map(ligneDetail).join("")}</table>`,
+      )
+      .join("") || `<p>Aucune donnee.</p>`;
+
+  return { groupes, html };
+}
+
 async function exportDettesPDF() {
   const win = openPrintableWindow();
   const dettes = (await dettesList()).filter((d) => d.statut === "Impayee");
   const total = dettes.reduce((a, d) => a + d.montant, 0);
-  const rows =
-    dettes
-      .map(
-        (d) =>
-          `<tr><td>${esc(d.membre)}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
-      )
-      .join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
+
+  const { groupes, html: sections } = grouperParMembreHTML(
+    dettes,
+    "id_membre",
+    (liste) => ({ nom: liste[0].membre, sousTitre: liste[0].telephone }),
+    (d) => d.montant,
+    (d) => `<tr><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
+    `<th>Date</th><th>Montant</th>`,
+  );
+
   const body = `
     <h1>Jeunesse M3D — Dettes du groupe</h1>
-    <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${dettes.length} dette(s) impayee(s)</div>
-    <table><tr><th>Membre</th><th>Date</th><th>Montant</th></tr>${rows}</table>
-    <h2>Total</h2>
+    <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${groupes.length} membre(s) concerne(s) &middot; ${dettes.length} dette(s) impayee(s)</div>
+    ${sections}
+    <h2>Total general</h2>
     <table><tr><th>Total des dettes impayees</th><td>${fmt(total)}</td></tr></table>
     <p class="meta">Ceci ne concerne que l'argent du au GROUPE. Les prets personnels entre membres (quelqu'un qui a avance une cotisation pour un autre) sont exportes separement.</p>
   `;
@@ -2458,23 +2507,27 @@ async function exportPretsMembresPDF() {
   const prets = await pretsMembres();
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const nomOf = (id) => (memById[id] ? esc(fullName(memById[id])) : "?");
-  const rows =
-    prets
-      .map(
-        (p) => `<tr>
-    <td>${nomOf(p.id_debiteur)}</td><td>${nomOf(p.id_preteur)}</td>
-    <td>${fmt(p.montant)}</td><td>${fmtDate(p.date)}</td>
-    <td>${p.rembourse ? "Rembourse" : "En attente"}</td>
-  </tr>`,
-      )
-      .join("") || `<tr><td colspan="5">Aucun pret enregistre</td></tr>`;
+  const nomOf = (id) => (memById[id] ? fullName(memById[id]) : "?");
   const enAttente = prets.filter((p) => !p.rembourse);
   const totalEnAttente = enAttente.reduce((a, p) => a + p.montant, 0);
+
+  // Meme procede que pour les dettes du groupe : une section par membre
+  // DEBITEUR (celui qui doit rembourser), avec son total du et le detail
+  // (a qui, montant, date) de chaque pret en attente.
+  const { groupes, html: sections } = grouperParMembreHTML(
+    enAttente,
+    "id_debiteur",
+    (liste) => ({ nom: nomOf(liste[0].id_debiteur), sousTitre: "" }),
+    (p) => p.montant,
+    (p) =>
+      `<tr><td>${esc(nomOf(p.id_preteur))}</td><td>${fmt(p.montant)}</td><td>${fmtDate(p.date)}</td></tr>`,
+    `<th>A avance</th><th>Montant</th><th>Date</th>`,
+  );
+
   const body = `
     <h1>Jeunesse M3D — Prets entre membres</h1>
-    <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${enAttente.length} pret(s) en attente de remboursement</div>
-    <table><tr><th>Doit a</th><th>A avance</th><th>Montant</th><th>Date</th><th>Statut</th></tr>${rows}</table>
+    <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${groupes.length} membre(s) concerne(s) &middot; ${enAttente.length} pret(s) en attente de remboursement</div>
+    ${sections}
     <h2>Total en attente</h2>
     <table><tr><th>Total des prets non rembourses</th><td>${fmt(totalEnAttente)}</td></tr></table>
     <p class="meta">Ceci concerne des arrangements PERSONNELS entre membres (un membre absent s'est fait avancer sa cotisation par un autre). Cet argent est deja compte comme recu par le groupe et n'apparait donc pas dans les dettes du groupe.</p>
@@ -2545,14 +2598,16 @@ async function exportRapportPDF() {
         (x) =>
           `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux * 100)}%</td></tr>`,
       )
-      .join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
+      .join("") ||
+    `<tr><td colspan="3">Aucun membre a 80% de presence ou plus</td></tr>`;
   const absRows =
     r.absents
       .map(
         (x) =>
           `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux * 100)}%</td></tr>`,
       )
-      .join("") || `<tr><td colspan="3">Pas assez de donnees</td></tr>`;
+      .join("") ||
+    `<tr><td colspan="3">Aucun membre a 40% de presence ou moins</td></tr>`;
   const histRows = r.joursStats
     .slice(0, 20)
     .map(
@@ -2578,9 +2633,9 @@ async function exportRapportPDF() {
     <table><tr><th>Fonction</th><th>Membres</th></tr>${fonctionsRows}</table>
     <h2>Anniversaires par mois</h2>
     <table><tr><th>Mois</th><th>Membres</th></tr>${moisRows}</table>
-    <h2>Membres les plus reguliers</h2>
+    <h2>Membres les plus reguliers (80%+ de presence)</h2>
     <table><tr><th>Membre</th><th>Cotisations payees</th><th>Taux</th></tr>${regRows}</table>
-    <h2>Membres les plus absents</h2>
+    <h2>Membres les plus absents (40% ou moins de presence)</h2>
     <table><tr><th>Membre</th><th>Cotisations payees</th><th>Taux</th></tr>${absRows}</table>
     <h2>Historique des cotisations (20 dernieres)</h2>
     <table><tr><th>Date</th><th>Anniversaire(s)</th><th>Total collecte</th><th>Ont cotise</th></tr>${histRows}</table>
@@ -2597,13 +2652,17 @@ async function exportRapportWord() {
   const dettes = (await dettesList()).filter((d) => d.statut === "Impayee");
   const style = `body{font-family:Calibri,Arial,sans-serif;color:#111827;} h1{color:#2563EB;font-size:20px;} h2{font-size:15px;margin-top:22px;border-bottom:1px solid #E5E7EB;padding-bottom:4px;} table{border-collapse:collapse;width:100%;margin-top:8px;} td,th{border:1px solid #D1D5DB;padding:6px 8px;font-size:12.5px;text-align:left;} th{background:#F3F4F6;}`;
   const kpiRows = `<table><tr><th>Membres</th><td>${membres.length}</td></tr><tr><th>Dimanches realises</th><td>${joursStats.length}</td></tr><tr><th>Solde caisse</th><td>${fmt(solde)}</td></tr><tr><th>Dettes impayees</th><td>${fmt(dettesTotal)}</td></tr></table>`;
-  const dettesRows =
-    dettes
-      .map(
-        (d) =>
-          `<tr><td>${esc(d.membre)}</td><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
-      )
-      .join("") || `<tr><td colspan="3">Aucune dette impayee</td></tr>`;
+  // Meme procede que dans exportDettesPDF : une section par membre avec
+  // son nom, son total du et le detail des semaines dues, au lieu d'une
+  // liste plate ou tous les membres sont melanges.
+  const { groupes: dettesGroupes, html: dettesSections } = grouperParMembreHTML(
+    dettes,
+    "id_membre",
+    (liste) => ({ nom: liste[0].membre, sousTitre: liste[0].telephone }),
+    (d) => d.montant,
+    (d) => `<tr><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
+    `<th>Date</th><th>Montant</th>`,
+  );
   const semainesRows = joursStats
     .slice(0, 12)
     .map(
@@ -2615,8 +2674,8 @@ async function exportRapportWord() {
     <h1>Jeunesse M3D — Rapport de gestion</h1>
     <p>Genere le ${fmtDate(todayISO())}</p>
     <h2>Vue d'ensemble</h2>${kpiRows}
-    <h2>Dettes impayees (${dettes.length})</h2>
-    <table><tr><th>Membre</th><th>Date</th><th>Montant</th></tr>${dettesRows}</table>
+    <h2>Dettes impayees (${dettes.length}) — ${dettesGroupes.length} membre(s) concerne(s)</h2>
+    ${dettesSections}
     <h2>Recapitulatif des dimanches</h2>
     <table><tr><th>Date</th><th>Anniversaire(s)</th><th>Total collecte</th><th>Ont cotise</th></tr>${semainesRows}</table>
   `;
