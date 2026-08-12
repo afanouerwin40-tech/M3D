@@ -301,9 +301,12 @@ async function compterParticipants(idsMembres, idSession) {
   for (const p of paiements) {
     if (dimIds.has(p.id_dimanche)) membresParticipants.add(p.id_membre);
   }
-  let count = 0;
-  for (const id of idsMembres) if (membresParticipants.has(id)) count++;
-  return count;
+  let score = 0;
+  for (const id of idsMembres) {
+    if (membresParticipants.has(id)) score++;
+    else score--;
+  }
+  return score;
 }
 
 // getOrCreateSessionActive : renvoie toujours l'id d'une session VALIDE et
@@ -1230,14 +1233,14 @@ async function rapportStats() {
   // volontaire : il n'est ni notablement regulier, ni notablement absent.
   const SEUIL_REGULIER = 0.8;
   const SEUIL_ABSENT = 0.4;
+  // Liste COMPLETE (pas de slice(0, 10)) : le rapport doit montrer tous
+  // les membres concernes, pas seulement les 10 premiers.
   const plusReguliers = regularite
     .filter((r) => r.total >= 2 && r.taux >= SEUIL_REGULIER)
-    .sort((a, b) => b.taux - a.taux || b.total - a.total)
-    .slice(0, 10);
+    .sort((a, b) => b.taux - a.taux || b.total - a.total);
   const absents = regularite
     .filter((r) => r.total >= 2 && r.taux <= SEUIL_ABSENT)
-    .sort((a, b) => a.taux - b.taux || b.total - a.total)
-    .slice(0, 10);
+    .sort((a, b) => a.taux - b.taux || b.total - a.total);
 
   const tauxParticipationGlobal = joursStats.length
     ? joursStats.reduce(
@@ -1262,5 +1265,75 @@ async function rapportStats() {
     joursStats,
     nbListes: listes.filter((l) => !l.archivee).length,
     nbListesArchivees: listes.filter((l) => l.archivee).length,
+  };
+}
+
+// ------------------------------------------------------------------
+// RAPPORT INDIVIDUEL D'UN MEMBRE — rassemble tout ce qui concerne UN SEUL
+// membre pour pouvoir lui envoyer sa propre fiche complete : detail de
+// chaque collecte (paye/non paye, montant, pour qui c'etait s'il s'agit
+// d'un anniversaire), sa dette envers le GROUPE (detail semaine par
+// semaine), et les prets PERSONNELS entre membres ou il est implique --
+// aussi bien comme debiteur (il doit a quelqu'un) que comme preteur
+// (quelqu'un lui doit).
+// ------------------------------------------------------------------
+async function rapportIndividuelMembre(idMembre) {
+  const membre = await db.membres.get(idMembre);
+  if (!membre) throw new Error("Membre introuvable.");
+
+  const historique = await historiquePaiementsMembre(idMembre);
+  const totalCollecteAttendu = historique.reduce(
+    (a, h) => a + h.montant_attendu,
+    0,
+  );
+  const totalCollectePaye = historique
+    .filter((h) => h.a_paye)
+    .reduce((a, h) => a + h.montant_attendu, 0);
+
+  // Dette envers le groupe : cotisations non payees de ce membre.
+  const detteGroupeDetail = (await dettesList()).filter(
+    (d) => d.id_membre === idMembre && d.statut === "Impayee",
+  );
+  const detteGroupeTotal = detteGroupeDetail.reduce((a, d) => a + d.montant, 0);
+
+  // Prets entre membres : ce membre comme DEBITEUR (il doit rembourser).
+  const tousLesPrets = await pretsMembres();
+  const membres = await db.membres.toArray();
+  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const nomOf = (id) =>
+    memById[id] ? `${memById[id].nom} ${memById[id].prenom}`.trim() : "?";
+  const pretsADevoir = tousLesPrets
+    .filter((p) => p.id_debiteur === idMembre)
+    .map((p) => ({ ...p, autreMembre: nomOf(p.id_preteur) }));
+  const pretsADevoirEnAttente = pretsADevoir.filter((p) => !p.rembourse);
+  const pretsADevoirTotal = pretsADevoirEnAttente.reduce(
+    (a, p) => a + p.montant,
+    0,
+  );
+
+  // Prets entre membres : ce membre comme PRETEUR (on lui doit de l'argent).
+  const pretsAPRecevoir = tousLesPrets
+    .filter((p) => p.id_preteur === idMembre)
+    .map((p) => ({ ...p, autreMembre: nomOf(p.id_debiteur) }));
+  const pretsARecevoirEnAttente = pretsAPRecevoir.filter((p) => !p.rembourse);
+  const pretsARecevoirTotal = pretsARecevoirEnAttente.reduce(
+    (a, p) => a + p.montant,
+    0,
+  );
+
+  return {
+    membre,
+    genereLe: todayISO(),
+    historique,
+    totalCollecteAttendu,
+    totalCollectePaye,
+    detteGroupeDetail,
+    detteGroupeTotal,
+    pretsADevoir,
+    pretsADevoirEnAttente,
+    pretsADevoirTotal,
+    pretsAPRecevoir,
+    pretsARecevoirEnAttente,
+    pretsARecevoirTotal,
   };
 }

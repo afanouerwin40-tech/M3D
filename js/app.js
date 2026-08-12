@@ -1102,11 +1102,15 @@ async function openMemberDetail(id) {
     <div class="detail-row"><span class="k">Dettes en cours</span><span class="v">${fmt(dettesTot)}</span></div>
     <div class="sheet-actions">
       <button class="btn btn-ghost" id="historiqueBtn" style="margin-bottom:8px;">Voir l'historique des cotisations</button>
+      <button class="btn btn-ghost" id="exportFicheBtn" style="margin-bottom:8px;">Envoyer sa fiche complete (PDF)</button>
       <button class="btn btn-ghost" id="editMemberBtn" style="margin-bottom:8px;">Modifier fonction / cotisation</button>
       <button class="btn btn-ghost" id="toggleStatutBtn">${m.statut === "Actif" ? "Marquer inactif" : "Reactiver"}</button>
     </div>
   `);
   document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  document
+    .getElementById("exportFicheBtn")
+    .addEventListener("click", () => exportMembreIndividuelPDF(id));
   document
     .getElementById("toggleStatutBtn")
     .addEventListener("click", async () => {
@@ -2429,6 +2433,86 @@ async function exportMembresPDF() {
     <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Fonction</th><th>Anniversaire</th><th>Date d'ajout</th><th>Statut</th></tr>${rows}</table>
   `;
   if (win) writePrintableDocument(win, "Membres — M3D", body);
+}
+
+// exportMembreIndividuelPDF() : fiche complete d'UN SEUL membre, pensee
+// pour etre envoyee individuellement (WhatsApp, email...). Contient tout
+// ce qui le concerne : le detail de chaque collecte (paye/non paye, pour
+// qui c'etait si c'est un anniversaire), sa dette envers le GROUPE
+// (semaine par semaine), et les prets PERSONNELS entre membres ou il est
+// implique (les deux sens : ce qu'il doit / ce qu'on lui doit).
+async function exportMembreIndividuelPDF(idMembre) {
+  const win = openPrintableWindow();
+  const r = await rapportIndividuelMembre(idMembre);
+  const nom = fullName(r.membre);
+
+  const collecteRows =
+    r.historique
+      .slice()
+      .reverse()
+      .map(
+        (h) => `<tr>
+      <td>${fmtDate(h.date)}</td>
+      <td>${h.a_paye ? "Paye" : "Non paye"}</td>
+      <td>${fmt(h.montant_attendu)}</td>
+      <td>${h.beneficiaires.length ? esc(h.beneficiaires.join(", ")) : "—"}</td>
+    </tr>`,
+      )
+      .join("") || `<tr><td colspan="4">Aucune collecte enregistree</td></tr>`;
+
+  const detteRows =
+    r.detteGroupeDetail
+      .map(
+        (d) => `<tr><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
+      )
+      .join("") ||
+    `<tr><td colspan="2">Aucune dette envers le groupe</td></tr>`;
+
+  const pretsADevoirRows =
+    r.pretsADevoirEnAttente
+      .map(
+        (p) =>
+          `<tr><td>${esc(p.autreMembre)}</td><td>${fmt(p.montant)}</td><td>${fmtDate(p.date)}</td></tr>`,
+      )
+      .join("") || `<tr><td colspan="3">Aucun pret en attente</td></tr>`;
+
+  const pretsARecevoirRows =
+    r.pretsARecevoirEnAttente
+      .map(
+        (p) =>
+          `<tr><td>${esc(p.autreMembre)}</td><td>${fmt(p.montant)}</td><td>${fmtDate(p.date)}</td></tr>`,
+      )
+      .join("") ||
+    `<tr><td colspan="3">Personne ne doit rembourser ce membre actuellement</td></tr>`;
+
+  const body = `
+    <h1>Jeunesse M3D — Fiche individuelle</h1>
+    <div class="meta">${esc(nom)} &middot; ${esc(r.membre.fonction || "Membre")} &middot; Genere le ${fmtDate(r.genereLe)}</div>
+
+    <h2>Resume</h2>
+    <table>
+      <tr><th>Total collecte attendu (toutes les semaines)</th><td>${fmt(r.totalCollecteAttendu)}</td></tr>
+      <tr><th>Total effectivement paye</th><td>${fmt(r.totalCollectePaye)}</td></tr>
+      <tr><th>Dette envers le groupe</th><td>${fmt(r.detteGroupeTotal)}</td></tr>
+      <tr><th>Prets a rembourser (a d'autres membres)</th><td>${fmt(r.pretsADevoirTotal)}</td></tr>
+      <tr><th>Prets a recevoir (d'autres membres)</th><td>${fmt(r.pretsARecevoirTotal)}</td></tr>
+    </table>
+
+    <h2>Collecte — detail (${r.historique.length} dimanche(s))</h2>
+    <table><tr><th>Date</th><th>Statut</th><th>Montant</th><th>Anniversaire(s) du jour</th></tr>${collecteRows}</table>
+
+    <h2>Dette envers le groupe — detail (Total : ${fmt(r.detteGroupeTotal)})</h2>
+    <table><tr><th>Date</th><th>Montant</th></tr>${detteRows}</table>
+
+    <h2>Prets entre membres — ce que ${esc(r.membre.prenom)} doit rembourser (Total : ${fmt(r.pretsADevoirTotal)})</h2>
+    <table><tr><th>A avance (a rembourser a)</th><th>Montant</th><th>Date</th></tr>${pretsADevoirRows}</table>
+
+    <h2>Prets entre membres — ce qu'on doit a ${esc(r.membre.prenom)} (Total : ${fmt(r.pretsARecevoirTotal)})</h2>
+    <table><tr><th>Doit rembourser</th><th>Montant</th><th>Date</th></tr>${pretsARecevoirRows}</table>
+
+    <p class="meta">Fiche individuelle generee automatiquement par l'app M3D Gestion. Le detail des collectes couvre uniquement les dimanches ou ce membre etait inscrit comme participant.</p>
+  `;
+  if (win) writePrintableDocument(win, `Fiche — ${nom} — M3D`, body);
 }
 
 // grouperParMembreHTML() : meme procede utilise partout ou on liste des
