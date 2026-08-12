@@ -689,6 +689,10 @@ async function enregistrerPretMembre(idPaiement, idPreteur) {
   if (!p) return;
   if (p.id_membre === idPreteur)
     throw new Error("Un membre ne peut pas preter a lui-meme.");
+  // La date du pret doit etre celle du DIMANCHE concerne (pas la date a
+  // laquelle on saisit/enregistre le pret dans l'app, qui peut etre
+  // differente si on rattrape une saisie en retard).
+  const dim = await db.dimanches.get(p.id_dimanche);
   await db.paiements.update(idPaiement, {
     a_paye: true,
     montant_paye: p.montant_attendu,
@@ -700,7 +704,7 @@ async function enregistrerPretMembre(idPaiement, idPreteur) {
     id_debiteur: p.id_membre,
     id_preteur: idPreteur,
     montant: p.montant_attendu,
-    date: todayISO(),
+    date: dim ? dim.date : todayISO(),
     rembourse: false,
   });
   await log("pret", "enregistre", idPaiement);
