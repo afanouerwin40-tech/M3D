@@ -96,6 +96,51 @@ db.version(4).stores({
   liste_membres: "id, id_liste, id_membre",
   prets_membres: "id, id_dimanche, id_debiteur, id_preteur, rembourse",
 });
+// Version 5 : correctif — "id_paiement" etait utilise dans des requetes
+// .where("id_paiement") (app.js, toggle Paye/Non paye d'un pret) mais
+// n'etait JAMAIS declare comme index sur prets_membres. Consequence
+// reelle : Dexie levait une SchemaError des qu'on decochait un paiement
+// couvert par un pret, le pret devenait orphelin et l'ecran plantait/se
+// figeait au lieu de se rafraichir. Ajout de l'index (upgrade additif,
+// sans risque : Dexie reindexe automatiquement les lignes existantes).
+db.version(5).stores({
+  membres: "id, nom, prenom, statut, mois_anniversaire",
+  sessions: "id, nom",
+  dimanches: "id, id_session, date, statut",
+  anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+  paiements: "id, id_dimanche, id_membre",
+  remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+  caisse_mouvements: "id, date, type",
+  parametres: "cle",
+  activity_log: "++seq, date, entite, action",
+  listes: "id, nom, date, archivee",
+  liste_membres: "id, id_liste, id_membre",
+  prets_membres:
+    "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+});
+// Version 5 : correction de bug — le champ "id_paiement" de prets_membres
+// etait utilise partout dans le code (db.prets_membres.where("id_paiement")
+// ...) mais n'a JAMAIS ete declare comme index dans le schema. Dexie leve
+// une SchemaError des qu'on fait .where() sur un champ non indexe : chaque
+// fois qu'un membre repassait "Non paye" un paiement couvert par un pret,
+// l'app plantait silencieusement et le pret orphelin restait en base.
+// Cette version ajoute l'index manquant ; aucune donnee n'est perdue
+// (upgrade purement additif au niveau du schema).
+db.version(5).stores({
+  membres: "id, nom, prenom, statut, mois_anniversaire",
+  sessions: "id, nom",
+  dimanches: "id, id_session, date, statut",
+  anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+  paiements: "id, id_dimanche, id_membre",
+  remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+  caisse_mouvements: "id, date, type",
+  parametres: "cle",
+  activity_log: "++seq, date, entite, action",
+  listes: "id, nom, date, archivee",
+  liste_membres: "id, id_liste, id_membre",
+  prets_membres:
+    "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+});
 // uid() : genere un identifiant unique. crypto.randomUUID() n'existe pas
 // avant Safari 15.4 (donc absent sur iOS 12, comme sur un iPad mini 2).
 // On utilise crypto.getRandomValues (supporte depuis Safari 6 / iOS 6.1)
@@ -131,6 +176,21 @@ const MOIS_NOMS = [
   "Novembre",
   "Decembre",
 ];
+
+// groupBy : regroupe un tableau par une cle, en un seul passage memoire.
+// Utilise partout pour remplacer les boucles `for (...) await db.x.where(...)`
+// (un aller-retour IndexedDB par element) par UN SEUL chargement de table
+// puis un regroupement en JS pur — c'est la base de l'optimisation de
+// performance de tout ce fichier (accueil, dimanches, dettes, caisse...).
+function groupBy(arr, key) {
+  const m = new Map();
+  for (const item of arr) {
+    const k = item[key];
+    if (!m.has(k)) m.set(k, []);
+    m.get(k).push(item);
+  }
+  return m;
+}
 
 async function log(entite, action, detail) {
   try {
@@ -200,6 +260,26 @@ async function isParticipant(idMembre, idSession) {
   const dimIds = new Set(dims.map((d) => d.id));
   const p = await db.paiements.where("id_membre").equals(idMembre).first();
   return p ? dimIds.has(p.id_dimanche) : false;
+}
+
+// compterParticipants : equivalent de `membres.map(m => isParticipant(m.id,
+// idSession))` mais SANS boucle N+1. Avant, isParticipant() rechargeait
+// `dimanches.where(id_session)` (le meme resultat a chaque fois !) une
+// fois PAR membre. Ici on charge dimanches + paiements une seule fois.
+async function compterParticipants(idsMembres, idSession) {
+  if (!idSession) return 0;
+  const [dims, paiements] = await Promise.all([
+    db.dimanches.where("id_session").equals(idSession).toArray(),
+    db.paiements.toArray(),
+  ]);
+  const dimIds = new Set(dims.map((d) => d.id));
+  const membresParticipants = new Set();
+  for (const p of paiements) {
+    if (dimIds.has(p.id_dimanche)) membresParticipants.add(p.id_membre);
+  }
+  let count = 0;
+  for (const id of idsMembres) if (membresParticipants.has(id)) count++;
+  return count;
 }
 
 // getOrCreateSessionActive : renvoie toujours l'id d'une session VALIDE et
@@ -272,31 +352,26 @@ async function caisseSolde() {
 // sont PAS inclus dans le solde (ils sont renvoyes separement, a titre
 // informatif uniquement).
 async function caisseDetail() {
-  const manuels = await db.caisse_mouvements.toArray();
+  // Avant : une boucle `for (dimanche of dimanches) { await ...; await ...; }`
+  // faisait 2 requetes IndexedDB SEQUENTIELLES par dimanche. Le total
+  // collecte/distribue est une simple somme sur TOUTES les lignes, peu
+  // importe leur regroupement par dimanche : on charge donc chaque table
+  // une seule fois, en parallele, puis on somme en memoire.
+  const [manuels, paiements, anniv, dettesImpayees] = await Promise.all([
+    db.caisse_mouvements.toArray(),
+    db.paiements.toArray(),
+    db.anniversaires_du_jour.toArray(),
+    totalDettesImpayees(),
+  ]);
   const entreesManuelles = manuels
     .filter((m) => m.type === "Entree")
     .reduce((a, m) => a + m.montant, 0);
   const sortiesManuelles = manuels
     .filter((m) => m.type === "Sortie")
     .reduce((a, m) => a + m.montant, 0);
+  const totalCollecte = paiements.reduce((a, p) => a + p.montant_paye, 0);
+  const totalCadeauxVerses = anniv.reduce((a, x) => a + x.montant_cadeau, 0);
 
-  const dimanches = await db.dimanches.toArray();
-  let totalCollecte = 0,
-    totalCadeauxVerses = 0;
-  for (const dim of dimanches) {
-    const paiements = await db.paiements
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    totalCollecte += paiements.reduce((a, p) => a + p.montant_paye, 0);
-    const anniv = await db.anniversaires_du_jour
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    totalCadeauxVerses += anniv.reduce((a, x) => a + x.montant_cadeau, 0);
-  }
-
-  const dettesImpayees = await totalDettesImpayees();
   const solde =
     entreesManuelles - sortiesManuelles + totalCollecte - totalCadeauxVerses;
 
@@ -332,40 +407,48 @@ async function ajusterCaisse(montantReel) {
 }
 
 async function joursAvecStats() {
-  const dimanches = (await db.dimanches.toArray()).sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
-  const membres = await db.membres.toArray();
+  // Avant : 2 requetes IndexedDB sequentielles PAR dimanche (await dans une
+  // boucle for). Avec ne serait-ce que 30-40 dimanches, ca fait 60-80
+  // allers-retours l'un apres l'autre. Maintenant : 3 chargements de table
+  // en parallele, une seule fois, puis regroupement en memoire (groupBy).
+  const [dimanches, membres, paiements, anniv] = await Promise.all([
+    db.dimanches.toArray(),
+    db.membres.toArray(),
+    db.paiements.toArray(),
+    db.anniversaires_du_jour.toArray(),
+  ]);
+  dimanches.sort((a, b) => a.date.localeCompare(b.date));
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const out = [];
-  for (const dim of dimanches) {
-    const paiements = await db.paiements
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    const anniv = await db.anniversaires_du_jour
-      .where("id_dimanche")
-      .equals(dim.id)
-      .toArray();
-    const totalCollecte = paiements.reduce((a, p) => a + p.montant_paye, 0);
-    const giftNeeded = anniv.reduce((a, x) => a + x.montant_cadeau, 0);
-    out.push({
+  const paiementsByDim = groupBy(paiements, "id_dimanche");
+  const annivByDim = groupBy(anniv, "id_dimanche");
+
+  const out = dimanches.map((dim) => {
+    const paiementsDuJour = paiementsByDim.get(dim.id) || [];
+    const annivDuJour = annivByDim.get(dim.id) || [];
+    const totalCollecte = paiementsDuJour.reduce(
+      (a, p) => a + p.montant_paye,
+      0,
+    );
+    const giftNeeded = annivDuJour.reduce((a, x) => a + x.montant_cadeau, 0);
+    return {
       dimanche: dim,
-      beneficiaires: anniv.map((a) =>
+      beneficiaires: annivDuJour.map((a) =>
         memById[a.id_membre_fete]
           ? `${memById[a.id_membre_fete].nom} ${memById[a.id_membre_fete].prenom}`.trim()
           : "?",
       ),
-      nbAnniv: Math.max(1, anniv.length),
-      montantAttendu: paiements[0] ? paiements[0].montant_attendu : 0,
-      nbPayants: paiements.filter((p) => p.a_paye).length,
-      nbTotal: paiements.length,
+      nbAnniv: Math.max(1, annivDuJour.length),
+      montantAttendu: paiementsDuJour[0]
+        ? paiementsDuJour[0].montant_attendu
+        : 0,
+      nbPayants: paiementsDuJour.filter((p) => p.a_paye).length,
+      nbTotal: paiementsDuJour.length,
       totalCollecte,
       giftNeeded,
       solde: totalCollecte - giftNeeded,
-      paiements,
-    });
-  }
+      paiements: paiementsDuJour,
+    };
+  });
   return out.reverse();
 }
 
@@ -618,25 +701,28 @@ async function marquerPretRembourse(idPret, rembourse) {
 // membre sur tous les dimanches ou il avait une ligne de paiement. Utilisee
 // par la fiche membre (timeline) et par membresIrreguliers().
 async function historiquePaiementsMembre(idMembre) {
-  const dimanches = (await db.dimanches.toArray()).sort((a, b) =>
-    a.date.localeCompare(b.date),
-  );
+  // Avant : boucle sur tous les dimanches avec 2 `await` sequentiels par
+  // dimanche (paiement du membre + anniversaires du jour), sans meme
+  // utiliser l'index deja present sur id_membre. Maintenant : la requete
+  // paiements est indexee sur id_membre (rapide et cible), et le reste est
+  // charge une fois puis assemble en memoire.
+  const [dimanches, paiementsMembre, anniv, membres] = await Promise.all([
+    db.dimanches.toArray(),
+    db.paiements.where("id_membre").equals(idMembre).toArray(),
+    db.anniversaires_du_jour.toArray(),
+    db.membres.toArray(),
+  ]);
+  dimanches.sort((a, b) => a.date.localeCompare(b.date));
+  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const paiementByDim = new Map(paiementsMembre.map((p) => [p.id_dimanche, p]));
+  const annivByDim = groupBy(anniv, "id_dimanche");
+
   const out = [];
   for (const d of dimanches) {
-    const p = await db.paiements
-      .where("id_dimanche")
-      .equals(d.id)
-      .and((x) => x.id_membre === idMembre)
-      .first();
+    const p = paiementByDim.get(d.id);
     if (!p) continue;
-    const anniv = await db.anniversaires_du_jour
-      .where("id_dimanche")
-      .equals(d.id)
-      .toArray();
-    const membres = await db.membres.bulkGet(
-      anniv.map((a) => a.id_membre_fete),
-    );
-    const beneficiaires = membres
+    const beneficiaires = (annivByDim.get(d.id) || [])
+      .map((a) => memById[a.id_membre_fete])
       .filter(Boolean)
       .map((m) => `${m.nom} ${m.prenom}`);
     out.push({
@@ -650,10 +736,28 @@ async function historiquePaiementsMembre(idMembre) {
 }
 
 async function membresIrreguliers() {
-  const membres = await db.membres.where("statut").equals("Actif").toArray();
+  // Avant : appelait historiquePaiementsMembre() pour CHAQUE membre actif,
+  // qui rechargeait a chaque fois toutes les tables -> O(membres x
+  // dimanches) allers-retours IndexedDB. Maintenant : un seul chargement
+  // de membres/dimanches/paiements, tout le calcul se fait en memoire.
+  const [membres, dimanches, paiements] = await Promise.all([
+    db.membres.where("statut").equals("Actif").toArray(),
+    db.dimanches.toArray(),
+    db.paiements.toArray(),
+  ]);
+  dimanches.sort((a, b) => a.date.localeCompare(b.date));
+  const ordreDim = new Map(dimanches.map((d, i) => [d.id, i]));
+  const paiementsParMembre = groupBy(paiements, "id_membre");
+
   const irreguliers = [];
   for (const m of membres) {
-    const historique = await historiquePaiementsMembre(m.id);
+    const historique = (paiementsParMembre.get(m.id) || [])
+      .slice()
+      .sort(
+        (a, b) =>
+          (ordreDim.get(a.id_dimanche) ?? 0) -
+          (ordreDim.get(b.id_dimanche) ?? 0),
+      );
     const n = historique.length;
     if (
       n >= 2 &&
@@ -669,10 +773,15 @@ async function membresIrreguliers() {
 // membresARelancer : liste d'action combinant deux causes -- une dette
 // envers le groupe, et/ou 2 cotisations manquees d'affilee (irregulier).
 // Un meme membre peut cumuler les deux raisons.
-async function membresARelancer() {
+// membresARelancer accepte optionnellement une liste d'irreguliers deja
+// calculee (evite de relancer membresIrreguliers() une 2e fois quand
+// l'appelant, comme renderAccueil(), l'a deja calculee juste avant).
+async function membresARelancer(irreguliersIdsPrecalcules) {
   const [dettes, irreguliersIds] = await Promise.all([
     dettesList(),
-    membresIrreguliers(),
+    irreguliersIdsPrecalcules
+      ? Promise.resolve(irreguliersIdsPrecalcules)
+      : membresIrreguliers(),
   ]);
   const dettesImpayees = dettes.filter((d) => d.statut === "Impayee");
   const parMembre = new Map();

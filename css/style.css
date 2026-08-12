@@ -81,10 +81,29 @@ html,body { overflow-x:hidden; }
 .chip-row { display:flex; align-items:center; justify-content:space-between; padding:10px 4px; border-bottom:1px solid var(--border); }
 .chip-row:last-child { border-bottom:none; }
 .chip-row .name { font-size:15px; font-weight:600; }
-.toggle { border:none; border-radius:999px; padding:8px 15px; font-size:13.5px; font-weight:700; cursor:pointer; }
+/* .chip-actions : regroupe le bouton "Pret" et le bouton d'etat
+   Paye/Non paye/Pret sur la meme ligne, avec un espacement constant, pour
+   qu'ils restent alignes quelle que soit la largeur de l'ecran. */
+.chip-actions { display:flex; align-items:center; gap:6px; }
+/* Les 3 etats d'un paiement (Paye / Non paye / Paye via un pret) et le
+   bouton d'action "Pret" partagent TOUS la classe .toggle : meme
+   padding, meme taille de police, meme rayon de bordure. Avant, "Pret"
+   utilisait .btn-chip (padding/police plus petits, bordure visible) ce
+   qui le desalignait visuellement du bouton Paye/Non paye a cote de lui. */
+.toggle { border:none; border-radius:999px; padding:8px 15px; font-size:13.5px; font-weight:700; cursor:pointer; line-height:1.2; }
 .toggle.on { background:var(--success); color:#fff; }
 .toggle.off { background:var(--surface-2); color:var(--text-3); }
 .toggle.wait { background:var(--bg-warning); color:var(--warning); }
+/* .toggle.loan : etat "paye car un autre membre a avance l'argent" —
+   couleur distincte (accent) plutot que reutiliser le vert de "Paye", pour
+   qu'on distingue les 3 etats d'un coup d'oeil tout en gardant EXACTEMENT
+   la meme taille/alignement que .on et .off. */
+.toggle.loan { background:var(--accent); color:#fff; }
+/* .toggle-ghost : variante discrete du meme composant .toggle, utilisee
+   pour l'action secondaire "Pret" (proposer qu'un autre membre ait avance
+   l'argent). Meme gabarit que .toggle, juste un style visuel plus leger
+   pour signaler que ce n'est pas l'etat actuel mais une action. */
+.toggle.toggle-ghost { background:transparent; color:var(--text-2); border:1.5px solid var(--border); }
 .chip-remove { border:none; background:none; color:var(--text-3); font-size:20px; line-height:1; cursor:pointer; padding:6px 4px 6px 10px; flex-shrink:0; }
 
 /* ---- Module "Mes listes" ---- */

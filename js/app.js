@@ -41,6 +41,19 @@ const esc = (s) =>
       ],
   );
 
+// ================================================================
+// safeColor() — la couleur d'une liste (l.couleur) est inseree directement
+// dans un attribut style="..." (border-left, background, color), PAS dans
+// du texte : esc() ne suffit pas a proteger un attribut de ce type. En
+// usage normal la couleur vient d'une palette fixe (LISTE_COULEURS), donc
+// aucun risque via l'interface. Mais une sauvegarde JSON importee peut
+// contenir n'importe quelle valeur pour ce champ : sans validation, une
+// couleur trafiquee du type `red;" onmouseover="alert(1)` casserait
+// l'attribut et executerait du JS (faille XSS stockee). safeColor()
+// n'accepte qu'un hex #rrggbb strict, sinon retombe sur la couleur par
+// defaut de l'app.
+const safeColor = (c) => (/^#[0-9a-fA-F]{6}$/.test(c) ? c : "#2563EB");
+
 // --- Listes deroulantes reutilisables (date d'anniversaire + fonction) ---
 function dayOptionsHTML(selected) {
   let out = `<option value="">--</option>`;
@@ -444,7 +457,7 @@ async function runGlobalSearch(qRaw, box) {
       matchListes
         .map(
           (l) =>
-            `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 14)}</span>${esc(l.nom)}</div>`,
+            `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone, 14)}</span>${esc(l.nom)}</div>`,
         )
         .join(""),
     ) +
@@ -502,6 +515,12 @@ function openARelancerSheet(liste) {
 }
 
 async function renderAccueil() {
+  // Optimisation : toutes les requetes independantes partent EN PARALLELE
+  // (Promise.all) au lieu de s'enchainer. membresIrreguliers() n'est
+  // calcule QU'UNE FOIS ici et est ensuite transmis a membresARelancer()
+  // (avant : calcule 2 fois a chaque affichage de l'accueil). Idem,
+  // totalDettesImpayees()/caisseSolde() ne font plus de boucle par
+  // dimanche cote db.js (voir db.js), donc les appeler restent legers.
   const [
     membres,
     joursStats,
@@ -512,6 +531,8 @@ async function renderAccueil() {
     irreguliersIds,
     pretsEnAttente,
     derniereSauvegarde,
+    sessionId,
+    membresMois,
   ] = await Promise.all([
     listMembres(),
     joursAvecStats(),
@@ -522,17 +543,21 @@ async function renderAccueil() {
     membresIrreguliers(),
     pretsMembres({ nonRembourseSeulement: true }),
     getParam("derniere_sauvegarde", null),
+    getParam("session_active"),
+    membresAnniversaireCeMoisRestants(new Date().getMonth() + 1),
   ]);
-  const sessionId = await getParam("session_active");
-  const participantsCount = (
-    await Promise.all(membres.map((m) => isParticipant(m.id, sessionId)))
-  ).filter(Boolean).length;
+  // compterParticipants() remplace l'ancienne boucle
+  // `membres.map(m => isParticipant(m.id, sessionId))` qui rechargeait la
+  // meme requete "dimanches de la session" une fois PAR membre.
+  const participantsCount = await compterParticipants(
+    membres.map((m) => m.id),
+    sessionId,
+  );
   const totalCollecte = joursStats.reduce((a, j) => a + j.totalCollecte, 0);
   const now = new Date();
   const mois = now.getMonth() + 1;
-  const membresMois = await membresAnniversaireCeMoisRestants(mois);
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const aRelancer = await membresARelancer();
+  const aRelancer = await membresARelancer(irreguliersIds);
 
   // Rappel de sauvegarde : la seule copie des donnees vit sur cet appareil.
   // Pas de sauvegarde recente = risque de tout perdre si le telephone est
@@ -1327,24 +1352,49 @@ async function openNewSunday() {
       setTimeout(() => openWeekDetail(id), 150);
     });
 }
+// paiementRowHTML : un seul gabarit pour la ligne "membre + statut" d'une
+// collecte. Avant, ce template etait duplique mot pour mot (initial +
+// refreshWeekRows), avec le risque classique de corriger un bug a un seul
+// endroit et pas l'autre — c'est d'ailleurs comme ca que le bouton "Pret"
+// avait fini legerement desaligne du bouton "Paye/Non paye" (tailles de
+// police/padding differentes entre .toggle et .btn-chip). Maintenant les
+// 3 etats (Paye / Non paye / Paye via pret) utilisent tous la classe
+// .toggle, avec la MEME taille — seule la couleur change — donc "Pret"
+// est visuellement aligne comme "Paye"/"Non paye" au lieu d'etre un
+// bouton a part de style different.
+function paiementRowHTML(p, memById, preteurParPaiement) {
+  const m = memById[p.id_membre] || { nom: "?", prenom: "" };
+  const idPreteur = preteurParPaiement[p.id];
+  const preteur = idPreteur ? memById[idPreteur] : null;
+  let etatClasse = "off",
+    label = "Non paye";
+  if (p.a_paye && preteur) {
+    etatClasse = "loan";
+    label = `Pret (${esc(fullName(preteur))})`;
+  } else if (p.a_paye) {
+    etatClasse = "on";
+    label = "Paye";
+  }
+  return `<div class="chip-row" data-paiement="${p.id}">
+    <span class="name">${esc(fullName(m))}</span>
+    <div class="chip-actions">
+      ${!p.a_paye ? `<button class="toggle toggle-ghost" data-pret="${p.id}" title="Un autre membre a paye a sa place">Pret</button>` : ""}
+      <button class="toggle ${etatClasse}" data-toggle-paiement="${p.id}">${label}</button>
+    </div>
+  </div>`;
+}
+
 async function openWeekDetail(dimId) {
   const dim = await db.dimanches.get(dimId);
   if (!dim) return;
-  const paiements = await db.paiements
-    .where("id_dimanche")
-    .equals(dimId)
-    .toArray();
-  const anniv = await db.anniversaires_du_jour
-    .where("id_dimanche")
-    .equals(dimId)
-    .toArray();
-  const membres = await db.membres.toArray();
+  const [paiements, anniv, membres, pretsDuJour] = await Promise.all([
+    db.paiements.where("id_dimanche").equals(dimId).toArray(),
+    db.anniversaires_du_jour.where("id_dimanche").equals(dimId).toArray(),
+    db.membres.toArray(),
+    db.prets_membres.where("id_dimanche").equals(dimId).toArray(),
+  ]);
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const pretsDuJour = await db.prets_membres
-    .where("id_dimanche")
-    .equals(dimId)
-    .toArray();
-  const preteurParPaiement = Object.fromEntries(
+  let preteurParPaiement = Object.fromEntries(
     pretsDuJour.map((pr) => [pr.id_paiement, pr.id_preteur]),
   );
   const benefNames =
@@ -1358,29 +1408,10 @@ async function openWeekDetail(dimId) {
   const total = paiements.reduce((a, p) => a + p.montant_paye, 0);
   const montantAttendu = paiements[0] ? paiements[0].montant_attendu : 0;
 
-  const rows = paiements
-    .slice()
-    .sort((a, b) =>
-      fullName(memById[a.id_membre] || {}).localeCompare(
-        fullName(memById[b.id_membre] || {}),
-      ),
-    )
-    .map((p) => {
-      const m = memById[p.id_membre] || { nom: "?", prenom: "" };
-      const idPreteur = preteurParPaiement[p.id];
-      const preteur = idPreteur ? memById[idPreteur] : null;
-      const label = p.a_paye
-        ? preteur
-          ? `Paye (via ${esc(fullName(preteur))})`
-          : "Paye"
-        : "Non paye";
-      return `<div class="chip-row" data-paiement="${p.id}">
-        <span class="name">${esc(fullName(m))}</span>
-        ${!p.a_paye ? `<button class="btn-chip" data-pret="${p.id}" title="Un autre membre a paye a sa place" style="margin-right:4px;">Pret</button>` : ""}
-        <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${label}</button>
-      </div>`;
-    })
-    .join("");
+  const triParNom = (a, b) =>
+    fullName(memById[a.id_membre] || {}).localeCompare(
+      fullName(memById[b.id_membre] || {}),
+    );
 
   const totalId = "wd_total_" + dimId;
   const ov = openSheet(`
@@ -1391,7 +1422,11 @@ async function openWeekDetail(dimId) {
       <input type="date" id="wd_date" value="${dim.date}">
     </div>
     <div class="small-note" style="margin-bottom:8px;" id="${totalId}">Total cotise : <b>${fmt(total)}</b> (${fmt(montantAttendu)}/membre)</div>
-    <div id="wd_rows">${rows}</div>
+    <div id="wd_rows">${paiements
+      .slice()
+      .sort(triParNom)
+      .map((p) => paiementRowHTML(p, memById, preteurParPaiement))
+      .join("")}</div>
     <div class="sheet-actions">
       <button class="btn btn-ghost" id="wd_export" style="margin-bottom:8px;">Exporter cette cotisation (PDF)</button>
       <button class="btn btn-ghost" id="wd_archive" style="margin-bottom:8px;">${dim.archivee ? "Desarchiver" : "Archiver"} ce dimanche</button>
@@ -1414,15 +1449,27 @@ async function openWeekDetail(dimId) {
     await log("dimanche", "date_modifiee", dimId);
     toast("Date mise a jour");
   });
-  ov.querySelectorAll("[data-toggle-paiement]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const pid = btn.dataset.togglePaiement;
-      const cur = btn.classList.contains("on");
-      const nextPaye = !cur;
+
+  // Delegation d'evenements : UN SEUL listener sur le conteneur des lignes,
+  // au lieu de re-attacher un listener par bouton a chaque rafraichissement
+  // (comme avant). Plus simple, plus rapide, et il n'y a plus qu'UN
+  // endroit ou le bug "id_paiement non indexe" (corrige dans db.js, voir
+  // migration version 5) pouvait se reproduire.
+  const rowsBox = ov.querySelector("#wd_rows");
+  rowsBox.addEventListener("click", async (e) => {
+    const toggleBtn = e.target.closest("[data-toggle-paiement]");
+    const pretBtn = e.target.closest("[data-pret]");
+    if (toggleBtn) {
+      const pid = toggleBtn.dataset.togglePaiement;
+      const nextPaye =
+        !toggleBtn.classList.contains("on") &&
+        !toggleBtn.classList.contains("loan");
       await marquerPaiement(pid, nextPaye);
       if (!nextPaye) {
         // On repasse "Non paye" a la main : si un pret entre membres etait
-        // associe a ce paiement, il n'a plus lieu d'etre.
+        // associe a ce paiement, il n'a plus lieu d'etre. (Cette requete
+        // necessite l'index id_paiement sur prets_membres — voir la
+        // migration version 5 dans db.js : avant, elle plantait ici.)
         const prets = await db.prets_membres
           .where("id_paiement")
           .equals(pid)
@@ -1430,87 +1477,42 @@ async function openWeekDetail(dimId) {
         for (const pr of prets) await db.prets_membres.delete(pr.id);
       }
       await refreshWeekRows();
-      const freshPaiements = await db.paiements
-        .where("id_dimanche")
-        .equals(dimId)
-        .toArray();
-      const newTotal = freshPaiements.reduce((a, p) => a + p.montant_paye, 0);
-      const totalEl = ov.querySelector("#" + totalId + " b");
-      if (totalEl) totalEl.textContent = fmt(newTotal);
-      if (currentTab === "accueil") renderAccueil();
-      else if (currentTab === "dimanche") renderDimanche();
-      else if (currentTab === "dettes") renderDettes();
-    });
+      notifyAutresEcrans();
+    } else if (pretBtn) {
+      openPretPicker(pretBtn.dataset.pret);
+    }
   });
-  ov.querySelectorAll("[data-pret]").forEach((btn) => {
-    btn.addEventListener("click", () => openPretPicker(btn.dataset.pret));
-  });
+
   async function refreshWeekRows() {
-    const freshPaiements = await db.paiements
-      .where("id_dimanche")
-      .equals(dimId)
-      .toArray();
-    const freshPrets = await db.prets_membres
-      .where("id_dimanche")
-      .equals(dimId)
-      .toArray();
-    const freshPreteurParPaiement = Object.fromEntries(
+    const [freshPaiements, freshPrets] = await Promise.all([
+      db.paiements.where("id_dimanche").equals(dimId).toArray(),
+      db.prets_membres.where("id_dimanche").equals(dimId).toArray(),
+    ]);
+    preteurParPaiement = Object.fromEntries(
       freshPrets.map((pr) => [pr.id_paiement, pr.id_preteur]),
     );
-    const rowsBox = ov.querySelector("#wd_rows");
     rowsBox.innerHTML = freshPaiements
       .slice()
-      .sort((a, b) =>
-        fullName(memById[a.id_membre] || {}).localeCompare(
-          fullName(memById[b.id_membre] || {}),
-        ),
-      )
-      .map((p) => {
-        const m = memById[p.id_membre] || { nom: "?", prenom: "" };
-        const idPreteur = freshPreteurParPaiement[p.id];
-        const preteur = idPreteur ? memById[idPreteur] : null;
-        const label = p.a_paye
-          ? preteur
-            ? `Paye (via ${esc(fullName(preteur))})`
-            : "Paye"
-          : "Non paye";
-        return `<div class="chip-row" data-paiement="${p.id}">
-          <span class="name">${esc(fullName(m))}</span>
-          ${!p.a_paye ? `<button class="btn-chip" data-pret="${p.id}" title="Un autre membre a paye a sa place" style="margin-right:4px;">Pret</button>` : ""}
-          <button class="toggle ${p.a_paye ? "on" : "off"}" data-toggle-paiement="${p.id}">${label}</button>
-        </div>`;
-      })
+      .sort(triParNom)
+      .map((p) => paiementRowHTML(p, memById, preteurParPaiement))
       .join("");
-    rowsBox.querySelectorAll("[data-toggle-paiement]").forEach((btn) => {
-      btn.addEventListener("click", async () => {
-        const pid = btn.dataset.togglePaiement;
-        const cur = btn.classList.contains("on");
-        const nextPaye = !cur;
-        await marquerPaiement(pid, nextPaye);
-        if (!nextPaye) {
-          const prets = await db.prets_membres
-            .where("id_paiement")
-            .equals(pid)
-            .toArray();
-          for (const pr of prets) await db.prets_membres.delete(pr.id);
-        }
-        await refreshWeekRows();
-        const fp = await db.paiements
-          .where("id_dimanche")
-          .equals(dimId)
-          .toArray();
-        const newTotal = fp.reduce((a, p) => a + p.montant_paye, 0);
-        const totalEl = ov.querySelector("#" + totalId + " b");
-        if (totalEl) totalEl.textContent = fmt(newTotal);
-        if (currentTab === "accueil") renderAccueil();
-        else if (currentTab === "dimanche") renderDimanche();
-        else if (currentTab === "dettes") renderDettes();
-      });
-    });
-    rowsBox.querySelectorAll("[data-pret]").forEach((btn) => {
-      btn.addEventListener("click", () => openPretPicker(btn.dataset.pret));
-    });
+    const newTotal = freshPaiements.reduce((a, p) => a + p.montant_paye, 0);
+    const totalEl = ov.querySelector("#" + totalId + " b");
+    if (totalEl) totalEl.textContent = fmt(newTotal);
   }
+
+  // notifyAutresEcrans : met a jour l'ecran actif SANS bloquer l'UI de la
+  // fiche ouverte. Avant, chaque coche relancait immediatement un
+  // renderAccueil()/renderDimanche() complet en attendant sa fin ; les
+  // fonctions de db.js sont maintenant optimisees (plus de N+1), donc ce
+  // re-render est deja tres rapide, mais on evite quand meme de le faire
+  // attendre inutilement l'interaction suivante de l'utilisateur.
+  function notifyAutresEcrans() {
+    if (currentTab === "accueil") renderAccueil();
+    else if (currentTab === "dimanche") renderDimanche();
+    else if (currentTab === "dettes") renderDettes();
+  }
+
   function openPretPicker(idPaiement) {
     const autresParticipants = paiements
       .filter((p) => p.id !== idPaiement)
@@ -1544,16 +1546,7 @@ async function openWeekDetail(dimId) {
           closeSheet();
           toast("Pret enregistre — cotisation marquee payee");
           await refreshWeekRows();
-          const fp = await db.paiements
-            .where("id_dimanche")
-            .equals(dimId)
-            .toArray();
-          const newTotal = fp.reduce((a, p) => a + p.montant_paye, 0);
-          const totalEl = ov.querySelector("#" + totalId + " b");
-          if (totalEl) totalEl.textContent = fmt(newTotal);
-          if (currentTab === "accueil") renderAccueil();
-          else if (currentTab === "dimanche") renderDimanche();
-          else if (currentTab === "dettes") renderDettes();
+          notifyAutresEcrans();
         } catch (err) {
           toast(err.message || "Erreur", "error");
         }
@@ -1800,9 +1793,9 @@ async function renderListesList() {
       const membres = await membresDeListe(l.id);
       const presents = membres.filter((m) => m.presence === "present").length;
       const payes = membres.filter((m) => m.paye).length;
-      return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${l.couleur};">
+      return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${safeColor(l.couleur)};">
       <div class="liste-card-top">
-        <span class="liste-icon" style="background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone)}</span>
+        <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
         <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}${l.montant_demande ? ` &middot; ${payes} paye${payes > 1 ? "s" : ""}` : ""}</div></div>
       </div>
       ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
@@ -1893,8 +1886,8 @@ async function renderListeDetailSheet(id) {
 
   const html = `
     <button class="sheet-close" data-close>&times;</button>
-    <div class="liste-detail-head" style="border-left:4px solid ${l.couleur};padding-left:12px;">
-      <span class="liste-icon" style="background:${l.couleur}22;color:${l.couleur};">${listeIconSVG(l.icone, 22)}</span>
+    <div class="liste-detail-head" style="border-left:4px solid ${safeColor(l.couleur)};padding-left:12px;">
+      <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone, 22)}</span>
       <div><h3 style="margin:0;">${esc(l.nom)}</h3><div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.archivee ? " &middot; Archivee" : ""}</div></div>
     </div>
     ${l.description ? `<p class="small-note">${esc(l.description)}</p>` : ""}
