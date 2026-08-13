@@ -2809,26 +2809,27 @@ function openAddMouvement() {
     <button class="btn btn-primary" id="mv_save">Enregistrer</button>
   `);
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
-}
-document.getElementById("mv_save").addEventListener("click", async () => {
-  const montant = Number(document.getElementById("mv_montant").value);
-  if (!montant) {
-    toast("Montant invalide", "error");
-    return;
-  }
-  await db.caisse_mouvements.add({
-    id: uid(),
-    date: todayISO(),
-    type: document.getElementById("mv_type").value,
-    montant,
-    libelle:
-      document.getElementById("mv_libelle").value.trim() || "Mouvement manuel",
+  document.getElementById("mv_save").addEventListener("click", async () => {
+    const montant = Number(document.getElementById("mv_montant").value);
+    if (!montant) {
+      toast("Montant invalide", "error");
+      return;
+    }
+    await db.caisse_mouvements.add({
+      id: uid(),
+      date: todayISO(),
+      type: document.getElementById("mv_type").value,
+      montant,
+      libelle:
+        document.getElementById("mv_libelle").value.trim() ||
+        "Mouvement manuel",
+    });
+    await log("caisse", "mouvement_manuel", montant);
+    closeSheet();
+    toast("Mouvement enregistre");
+    renderPlus();
   });
-  await log("caisse", "mouvement_manuel", montant);
-  closeSheet();
-  toast("Mouvement enregistre");
-  renderPlus();
-});
+}
 
 // ---------------------------------------------------------------
 // Sauvegarde / restauration JSON
