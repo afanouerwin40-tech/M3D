@@ -244,7 +244,7 @@ function showSetupScreen() {
     await setAdminPassword(pw);
     try {
       sessionStorage.setItem("m3d_authed", "1");
-      localStorage.setItem("m3d_auth_ts", Date.now().toString());
+      localStorage.removeItem("m3d_hidden_at");
     } catch (e) {}
     el.remove();
     showTab("accueil");
@@ -269,7 +269,7 @@ function showLoginScreen() {
     }
     try {
       sessionStorage.setItem("m3d_authed", "1");
-      localStorage.setItem("m3d_auth_ts", Date.now().toString());
+      localStorage.removeItem("m3d_hidden_at");
     } catch (e) {}
     el.remove();
     showTab("accueil");
@@ -320,6 +320,59 @@ function confirmWithPassword(message) {
 }
 
 // ---------------------------------------------------------------
+// Verrouillage automatique apres 5 minutes en arriere-plan
+// ---------------------------------------------------------------
+// AVANT (bugue) : un timestamp etait pose a la CONNEXION et compare a
+// "maintenant" a chaque changement d'onglet. Deux problemes concrets :
+//  1. Un utilisateur qui reste plus de 5 min sur le MEME ecran (ex. saisie
+//     d'une longue collecte) se faisait deconnecter en pleine action, des
+//     qu'il touchait enfin un autre onglet -- alors qu'il n'avait jamais
+//     quitte l'app.
+//  2. A l'inverse, si l'app etait mise en arriere-plan (telephone verrouille,
+//     changement d'appli) puis reprecisement rouverte SUR LE MEME onglet
+//     (sans navigation), aucun controle ne se declenchait : le mot de passe
+//     n'etait JAMAIS redemande, quelle que soit la duree passee en arriere-
+//     plan -- exactement le cas que la fonctionnalite est censee couvrir.
+// MAINTENANT : on horodate le moment ou l'app devient VRAIMENT invisible
+// (onglet cache, appli mise en arriere-plan, ecran verrouille -- l'event
+// standard "visibilitychange") et on ne verifie l'ecart QUE quand elle
+// redevient visible, quel que soit l'ecran ou l'utilisateur se trouvait.
+// Duree avant reverrouillage automatique (mot de passe redemande) quand
+// l'app reste en arriere-plan. Passe de 5 a 30 minutes sur demande — pour
+// ajuster, il suffit de changer ce seul nombre (en minutes).
+const SESSION_TIMEOUT_MINUTES = 30;
+const SESSION_TIMEOUT_MS = SESSION_TIMEOUT_MINUTES * 60 * 1000;
+
+function verrouillerSiExpire() {
+  try {
+    const authed = sessionStorage.getItem("m3d_authed") === "1";
+    if (!authed) return false;
+    const hiddenAt = localStorage.getItem("m3d_hidden_at");
+    if (!hiddenAt) return false;
+    if (Date.now() - parseInt(hiddenAt, 10) > SESSION_TIMEOUT_MS) {
+      sessionStorage.removeItem("m3d_authed");
+      localStorage.removeItem("m3d_hidden_at");
+      // Ferme toute fiche ouverte pour ne rien laisser visible derriere
+      // l'ecran de verrouillage (dette d'un membre, montant en caisse...).
+      while (sheetStack.length) closeSheet();
+      showLoginScreen();
+      return true;
+    }
+  } catch (e) {}
+  return false;
+}
+
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) {
+    try {
+      localStorage.setItem("m3d_hidden_at", Date.now().toString());
+    } catch (e) {}
+  } else {
+    verrouillerSiExpire();
+  }
+});
+
+// ---------------------------------------------------------------
 // Toast
 // ---------------------------------------------------------------
 function toast(msg, kind = "success") {
@@ -361,20 +414,6 @@ function closeSheet() {
 // Navigation
 // ---------------------------------------------------------------
 async function showTab(tab) {
-  // Check if authentication has expired (5 minutes) on every tab change
-  try {
-    const authTs = localStorage.getItem("m3d_auth_ts");
-    if (authTs && (Date.now() - parseInt(authTs)) > 5 * 60 * 1000) { // 5 minutes in milliseconds
-      // Clear auth state
-      sessionStorage.removeItem("m3d_authed");
-      localStorage.removeItem("m3d_auth_ts");
-      showLoginScreen();
-      return;
-    }
-  } catch (e) {
-    // If there's an error checking the timestamp, proceed with authentication
-  }
-
   currentTab = tab;
   document
     .querySelectorAll(".tab")
@@ -536,13 +575,13 @@ async function runGlobalSearch(qRaw, box) {
 }
 
 function openARelancerSheet(liste) {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>A relancer</h3>
     <div class="small-note" style="margin-bottom:12px;">Membres avec une dette envers le groupe et/ou 2 cotisations manquees d'affilee.</div>
     <div id="relancer_list"></div>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   const box = document.getElementById("relancer_list");
   box.innerHTML = liste.length
     ? liste
@@ -593,13 +632,10 @@ async function renderAccueil() {
     getParam("session_active"),
     membresAnniversaireCeMoisRestants(new Date().getMonth() + 1),
   ]);
-  // compterParticipants() remplace l'ancienne boucle
-  // `membres.map(m => isParticipant(m.id, sessionId))` qui rechargeait la
-  // meme requete "dimanches de la session" une fois PAR membre.
-  const participantsCount = await compterParticipants(
-    membres.map((m) => m.id),
-    sessionId,
-  );
+  // compterCotisants() = nombre de membres ACTIFS ayant reellement paye
+  // au moins une fois sur la session active (voir db.js pour le detail du
+  // bug corrige : l'ancien calcul pouvait afficher un nombre negatif).
+  const participantsCount = await compterCotisants(sessionId);
   const totalCollecte = joursStats.reduce((a, j) => a + j.totalCollecte, 0);
   const now = new Date();
   const mois = now.getMonth() + 1;
@@ -1008,7 +1044,7 @@ async function renderMembres() {
   await renderMemberList();
 }
 function openMemberFiltersSheet() {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Filtrer &amp; trier</h3>
     <div class="field"><label>Trier par</label>
@@ -1030,7 +1066,7 @@ function openMemberFiltersSheet() {
     <button class="btn btn-primary" id="mf_apply" style="margin-bottom:8px;">Appliquer</button>
     <button class="btn btn-ghost" id="mf_reset">Reinitialiser les filtres</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   document.getElementById("mf_apply").addEventListener("click", () => {
     memberSort = document.getElementById("mf_sort").value;
     memberFilterFonction = document.getElementById("mf_fonction").value;
@@ -1123,7 +1159,7 @@ async function openMemberDetail(id) {
       <button class="btn btn-ghost" id="toggleStatutBtn">${m.statut === "Actif" ? "Marquer inactif" : "Reactiver"}</button>
     </div>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   document
     .getElementById("exportFicheBtn")
     .addEventListener("click", () => exportMembreIndividuelPDF(id));
@@ -1156,13 +1192,13 @@ async function openMemberDetail(id) {
 }
 async function openHistoriqueMembre(m) {
   const historique = await historiquePaiementsMembre(m.id);
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Historique — ${esc(fullName(m))}</h3>
     <div class="small-note" style="margin-bottom:12px;">${historique.length} dimanche(s) ou ${esc(m.prenom)} etait attendu(e).</div>
     <div id="histo_list"></div>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   const box = document.getElementById("histo_list");
   box.innerHTML = historique.length
     ? historique
@@ -1179,7 +1215,7 @@ async function openHistoriqueMembre(m) {
     : emptyHTML("Aucun dimanche enregistre pour ce membre pour l'instant.");
 }
 function openEditMember(m) {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Modifier ${esc(fullName(m))}</h3>
     <div class="field-row">
@@ -1204,7 +1240,7 @@ function openEditMember(m) {
     <div class="field"><label>Observations</label><input id="em_obs" type="text" value="${esc(m.observations || "")}" placeholder="Facultatif"></div>
     <button class="btn btn-primary" id="em_save" style="margin-top:14px;">Enregistrer</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   wireFonctionAutre(
     "em_fonction_select",
     "em_fonction_autre_wrap",
@@ -1251,7 +1287,7 @@ function openEditMember(m) {
   });
 }
 function openAddMember() {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Nouveau membre</h3>
     <div class="field"><label>Nom</label><input id="f_nom" type="text"></div>
@@ -1267,7 +1303,7 @@ function openAddMember() {
     <button class="btn btn-primary" id="saveMemberBtn">Ajouter</button>
     <div class="small-note">Le nouveau membre rejoint le registre general. Il participera aux collectes a partir de la prochaine session, sauf si tu l'ajoutes manuellement a un dimanche.</div>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   wireFonctionAutre(
     "f_fonction_select",
     "f_fonction_autre_wrap",
@@ -1351,7 +1387,7 @@ async function openNewSunday() {
   const initialDate = todayISO();
   const suggested = await membresAnniversaireCeDimanche(initialDate);
   const suggestedIds = new Set(suggested.map((m) => m.id));
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Nouveau dimanche</h3>
     <div class="field"><label>Date</label><input id="nd_date" type="date" value="${initialDate}"></div>
@@ -1364,7 +1400,7 @@ async function openNewSunday() {
     <div class="small-note">Tous les membres partiront de "Non paye" — tu coches au fur et a mesure que chacun cotise, ca s'enregistre seul.</div>
     <button class="btn btn-primary" id="createSundayBtn" style="margin-top:14px;">Creer le dimanche</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   document.getElementById("nd_date").addEventListener("change", async (e) => {
     const sug = await membresAnniversaireCeDimanche(e.target.value);
     const sugIds = new Set(sug.map((m) => m.id));
@@ -1569,7 +1605,7 @@ async function openWeekDetail(dimId) {
       .filter((p) => p.id !== idPaiement)
       .map((p) => memById[p.id_membre])
       .filter(Boolean);
-    openSheet(`
+    const ov = openSheet(`
       <button class="sheet-close" data-close>&times;</button>
       <h3>Qui a avance l'argent ?</h3>
       <div class="small-note" style="margin-bottom:10px;">La cotisation sera marquee payee immediatement pour le groupe. Le pret entre les deux membres sera suivi a part (Plus &rarr; Prets entre membres).</div>
@@ -1587,9 +1623,7 @@ async function openWeekDetail(dimId) {
           )
           .join("")
       : emptyHTML("Aucun autre participant sur ce dimanche.");
-    document
-      .querySelector("[data-close]")
-      .addEventListener("click", closeSheet);
+    ov.querySelector("[data-close]").addEventListener("click", closeSheet);
     box.querySelectorAll("[data-preteur]").forEach((el) =>
       el.addEventListener("click", async () => {
         try {
@@ -1653,14 +1687,14 @@ async function renderDettes() {
       .join("");
 }
 function openRembourser(idPaiement) {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Marquer comme remboursee</h3>
     <div class="field"><label>Montant</label><input id="rb_montant" type="number"></div>
     <div class="field"><label>Note (facultatif)</label><input id="rb_note" type="text"></div>
     <button class="btn btn-primary" id="rb_save">Confirmer le remboursement</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   document.getElementById("rb_save").addEventListener("click", async () => {
     const p = await db.paiements.get(idPaiement);
     const montant =
@@ -1862,7 +1896,7 @@ async function renderListesList() {
 }
 
 function openCreerListe() {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Nouvelle liste</h3>
     <div class="field"><label>Nom</label><input id="l_nom" type="text" placeholder="Ex. Sortie jeunesse, Camp 2026..."></div>
@@ -1874,7 +1908,7 @@ function openCreerListe() {
     <div class="field"><label>Notes</label><input id="l_notes" type="text" placeholder="Facultatif"></div>
     <button class="btn btn-primary" id="l_save">Creer la liste</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   let couleur = LISTE_COULEURS[0],
     icone = LISTE_ICONE_KEYS[0];
   document.querySelectorAll("#l_couleur_row .swatch").forEach((b) =>
@@ -2732,66 +2766,21 @@ async function exportRapportPDF() {
     <table><tr><th>Membre</th><th>Cotisations payees</th><th>Taux</th></tr>${regRows}</table>
     <h2>Membres les plus absents (40% ou moins de presence)</h2>
     <table><tr><th>Membre</th><th>Cotisations payees</th><th>Taux</th></tr>${absRows}</table>
-    <h2>Historique des cotisations (20 dernieres)</h2>
+    <h2>Historique des cotisations (${r.joursStats.length})</h2>
     <table><tr><th>Date</th><th>Anniversaire(s)</th><th>Total collecte</th><th>Ont cotise</th></tr>${histRows}</table>
   `;
   if (win) writePrintableDocument(win, "Rapport general — M3D", body);
 }
-async function exportRapportWord() {
-  const [membres, joursStats, dettesTotal, solde] = await Promise.all([
-    listMembres(),
-    joursAvecStats(),
-    totalDettesImpayees(),
-    caisseSolde(),
-  ]);
-  const dettes = (await dettesList()).filter((d) => d.statut === "Impayee");
-  const style = `body{font-family:Calibri,Arial,sans-serif;color:#111827;} h1{color:#2563EB;font-size:20px;} h2{font-size:15px;margin-top:22px;border-bottom:1px solid #E5E7EB;padding-bottom:4px;} table{border-collapse:collapse;width:100%;margin-top:8px;} td,th{border:1px solid #D1D5DB;padding:6px 8px;font-size:12.5px;text-align:left;} th{background:#F3F4F6;}`;
-  const kpiRows = `<table><tr><th>Membres</th><td>${membres.length}</td></tr><tr><th>Dimanches realises</th><td>${joursStats.length}</td></tr><tr><th>Solde caisse</th><td>${fmt(solde)}</td></tr><tr><th>Dettes impayees</th><td>${fmt(dettesTotal)}</td></tr></table>`;
-  // Meme procede que dans exportDettesPDF : une section par membre avec
-  // son nom, son total du et le detail des semaines dues, au lieu d'une
-  // liste plate ou tous les membres sont melanges.
-  const { groupes: dettesGroupes, html: dettesSections } = grouperParMembreHTML(
-    dettes,
-    "id_membre",
-    (liste) => ({ nom: liste[0].membre, sousTitre: liste[0].telephone }),
-    (d) => d.montant,
-    (d) => `<tr><td>${fmtDate(d.date)}</td><td>${fmt(d.montant)}</td></tr>`,
-    `<th>Date</th><th>Montant</th>`,
-  );
-  const semainesRows = joursStats
-    .slice(0, 12)
-    .map(
-      (j) =>
-        `<tr><td>${fmtDate(j.dimanche.date)}</td><td>${esc(j.beneficiaires.join(", ")) || "—"}</td><td>${fmt(j.totalCollecte)}</td><td>${j.nbPayants}/${j.nbTotal}</td></tr>`,
-    )
-    .join("");
-  const content = `
-    <h1>Jeunesse M3D — Rapport de gestion</h1>
-    <p>Genere le ${fmtDate(todayISO())}</p>
-    <h2>Vue d'ensemble</h2>${kpiRows}
-    <h2>Dettes impayees (${dettes.length}) — ${dettesGroupes.length} membre(s) concerne(s)</h2>
-    ${dettesSections}
-    <h2>Recapitulatif des dimanches</h2>
-    <table><tr><th>Date</th><th>Anniversaire(s)</th><th>Total collecte</th><th>Ont cotise</th></tr>${semainesRows}</table>
-  `;
-  const header = `<html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'><head><meta charset='utf-8'><title>Rapport M3D</title><style>${style}</style></head><body>`;
-  const footer = `</body></html>`;
-  const blob = new Blob(["\ufeff", header + content + footer], {
-    type: "application/msword",
-  });
-  telechargerFichier(blob, `m3d-rapport-${todayISO()}.doc`);
-  toast("Rapport Word telecharge");
-}
 async function openAjusterCaisse() {
   const cd = await caisseDetail();
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Ajuster la caisse</h3>
     <div class="small-note" style="margin-bottom:12px;">Solde calcule actuellement : <b>${fmt(cd.solde)}</b>. Indique le montant que tu as REELLEMENT en main : l'app ajoutera automatiquement un mouvement pour combler l'ecart, sans rien effacer de l'historique.</div>
     <div class="field"><label>Montant reel en main (FCFA)</label><input id="aj_montant" type="number" value="${cd.solde}"></div>
     <button class="btn btn-primary" id="aj_save">Ajuster</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   document.getElementById("aj_save").addEventListener("click", async () => {
     const montant = Number(document.getElementById("aj_montant").value);
     if (isNaN(montant)) {
@@ -2809,7 +2798,7 @@ async function openAjusterCaisse() {
   });
 }
 function openAddMouvement() {
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>Nouveau mouvement de caisse</h3>
     <div class="field"><label>Type</label>
@@ -2819,28 +2808,27 @@ function openAddMouvement() {
     <div class="field"><label>Libelle</label><input id="mv_libelle" type="text" placeholder="Ex. Achat cadeau"></div>
     <button class="btn btn-primary" id="mv_save">Enregistrer</button>
   `);
-  document.querySelector("[data-close]").addEventListener("click", closeSheet);
-  document.getElementById("mv_save").addEventListener("click", async () => {
-    const montant = Number(document.getElementById("mv_montant").value);
-    if (!montant) {
-      toast("Montant invalide", "error");
-      return;
-    }
-    await db.caisse_mouvements.add({
-      id: uid(),
-      date: todayISO(),
-      type: document.getElementById("mv_type").value,
-      montant,
-      libelle:
-        document.getElementById("mv_libelle").value.trim() ||
-        "Mouvement manuel",
-    });
-    await log("caisse", "mouvement_manuel", montant);
-    closeSheet();
-    toast("Mouvement enregistre");
-    renderPlus();
-  });
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
 }
+document.getElementById("mv_save").addEventListener("click", async () => {
+  const montant = Number(document.getElementById("mv_montant").value);
+  if (!montant) {
+    toast("Montant invalide", "error");
+    return;
+  }
+  await db.caisse_mouvements.add({
+    id: uid(),
+    date: todayISO(),
+    type: document.getElementById("mv_type").value,
+    montant,
+    libelle:
+      document.getElementById("mv_libelle").value.trim() || "Mouvement manuel",
+  });
+  await log("caisse", "mouvement_manuel", montant);
+  closeSheet();
+  toast("Mouvement enregistre");
+  renderPlus();
+});
 
 // ---------------------------------------------------------------
 // Sauvegarde / restauration JSON
@@ -2968,20 +2956,10 @@ initTheme();
     showLoginScreen();
     return;
   }
-
-  // Check if authentication has expired (5 minutes)
-  try {
-    const authTs = localStorage.getItem("m3d_auth_ts");
-    if (authTs && (Date.now() - parseInt(authTs)) > 5 * 60 * 1000) { // 5 minutes in milliseconds
-      // Clear auth state
-      sessionStorage.removeItem("m3d_authed");
-      localStorage.removeItem("m3d_auth_ts");
-      showLoginScreen();
-      return;
-    }
-  } catch (e) {
-    // If there's an error checking the timestamp, proceed with authentication
-  }
+  // Meme verification qu'au retour de mise en arriere-plan : couvre le cas
+  // ou l'app etait deja cachee (ecran verrouille, changement d'appli) au
+  // moment ou cette page a ete (re)chargee.
+  if (verrouillerSiExpire()) return;
 
   showTab("accueil");
 })();

@@ -120,28 +120,6 @@ db.version(4).stores({
   liste_membres: "id, id_liste, id_membre",
   prets_membres: "id, id_dimanche, id_debiteur, id_preteur, rembourse",
 });
-// Version 5 : correctif — "id_paiement" etait utilise dans des requetes
-// .where("id_paiement") (app.js, toggle Paye/Non paye d'un pret) mais
-// n'etait JAMAIS declare comme index sur prets_membres. Consequence
-// reelle : Dexie levait une SchemaError des qu'on decochait un paiement
-// couvert par un pret, le pret devenait orphelin et l'ecran plantait/se
-// figeait au lieu de se rafraichir. Ajout de l'index (upgrade additif,
-// sans risque : Dexie reindexe automatiquement les lignes existantes).
-db.version(5).stores({
-  membres: "id, nom, prenom, statut, mois_anniversaire",
-  sessions: "id, nom",
-  dimanches: "id, id_session, date, statut",
-  anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
-  paiements: "id, id_dimanche, id_membre",
-  remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
-  caisse_mouvements: "id, date, type",
-  parametres: "cle",
-  activity_log: "++seq, date, entite, action",
-  listes: "id, nom, date, archivee",
-  liste_membres: "id, id_liste, id_membre",
-  prets_membres:
-    "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
-});
 // Version 5 : correction de bug — le champ "id_paiement" de prets_membres
 // etait utilise partout dans le code (db.prets_membres.where("id_paiement")
 // ...) mais n'a JAMAIS ete declare comme index dans le schema. Dexie leve
@@ -290,6 +268,9 @@ async function isParticipant(idMembre, idSession) {
 // idSession))` mais SANS boucle N+1. Avant, isParticipant() rechargeait
 // `dimanches.where(id_session)` (le meme resultat a chaque fois !) une
 // fois PAR membre. Ici on charge dimanches + paiements une seule fois.
+// Retourne le NOMBRE de membres ayant au moins un paiement enregistre
+// (paye ou non) sur la session, tous statuts confondus — utilise pour la
+// fiche membre ("Participe a la session active : Oui/Non").
 async function compterParticipants(idsMembres, idSession) {
   if (!idSession) return 0;
   const [dims, paiements] = await Promise.all([
@@ -301,12 +282,34 @@ async function compterParticipants(idsMembres, idSession) {
   for (const p of paiements) {
     if (dimIds.has(p.id_dimanche)) membresParticipants.add(p.id_membre);
   }
-  let score = 0;
-  for (const id of idsMembres) {
-    if (membresParticipants.has(id)) score++;
-    else score--;
+  let count = 0;
+  for (const id of idsMembres) if (membresParticipants.has(id)) count++;
+  return count;
+}
+
+// compterCotisants : le KPI "Cotisants" de l'accueil. AVANT (bug) :
+// compterParticipants() retournait un "score" +1 par participant / -1 par
+// non-participant au lieu d'un compte -- ce qui pouvait meme afficher un
+// nombre NEGATIF sur l'accueil -- et comptait aussi les membres Inactifs,
+// et n'importe quel paiement enregistre (meme "Non paye") comme
+// "cotisant". Ici : uniquement les membres ACTIFS ayant REELLEMENT paye
+// (a_paye === true) au moins une fois sur la session active.
+async function compterCotisants(idSession) {
+  if (!idSession) return 0;
+  const [dims, paiements, membresActifs] = await Promise.all([
+    db.dimanches.where("id_session").equals(idSession).toArray(),
+    db.paiements.toArray(),
+    db.membres.where("statut").equals("Actif").toArray(),
+  ]);
+  const dimIds = new Set(dims.map((d) => d.id));
+  const idsActifs = new Set(membresActifs.map((m) => m.id));
+  const cotisants = new Set();
+  for (const p of paiements) {
+    if (p.a_paye && dimIds.has(p.id_dimanche) && idsActifs.has(p.id_membre)) {
+      cotisants.add(p.id_membre);
+    }
   }
-  return score;
+  return cotisants.size;
 }
 
 // getOrCreateSessionActive : renvoie toujours l'id d'une session VALIDE et
