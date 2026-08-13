@@ -2532,7 +2532,7 @@ async function exportMembreIndividuelPDF(idMembre) {
     `<tr><td colspan="3">Personne ne doit rembourser ce membre actuellement</td></tr>`;
 
   const body = `
-    <h1>Jeunesse M3D</h1>
+    <h1>Jeunesse M3D — Fiche individuelle</h1>
     <div class="meta">${esc(nom)} &middot; ${esc(r.membre.fonction || "Membre")} &middot; Genere le ${fmtDate(r.genereLe)}</div>
 
     <h2>Resume</h2>
@@ -2556,6 +2556,7 @@ async function exportMembreIndividuelPDF(idMembre) {
     <h2>Prets entre membres — ce qu'on doit a ${esc(r.membre.prenom)} (Total : ${fmt(r.pretsARecevoirTotal)})</h2>
     <table><tr><th>Doit rembourser</th><th>Montant</th><th>Date</th></tr>${pretsARecevoirRows}</table>
 
+    <p class="meta">Fiche individuelle generee automatiquement par l'app M3D Gestion. Le detail des collectes couvre uniquement les dimanches ou ce membre etait inscrit comme participant.</p>
   `;
   if (win) writePrintableDocument(win, `Fiche — ${nom} — M3D`, body);
 }
@@ -2621,11 +2622,12 @@ async function exportDettesPDF() {
   );
 
   const body = `
-    <h1>Jeunesse M3D</h1>
+    <h1>Jeunesse M3D — Dettes du groupe</h1>
     <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${groupes.length} membre(s) concerne(s) &middot; ${dettes.length} dette(s) impayee(s)</div>
     ${sections}
     <h2>Total general</h2>
     <table><tr><th>Total des dettes impayees</th><td>${fmt(total)}</td></tr></table>
+    <p class="meta">Ceci ne concerne que l'argent du au GROUPE. Les prets personnels entre membres (quelqu'un qui a avance une cotisation pour un autre) sont exportes separement.</p>
   `;
   if (win) writePrintableDocument(win, "Dettes du groupe — M3D", body);
 }
@@ -2653,7 +2655,7 @@ async function exportPretsMembresPDF() {
   );
 
   const body = `
-    <h1>Jeunesse M3D</h1>
+    <h1>Jeunesse M3D — Prets entre membres</h1>
     <div class="meta">Genere le ${fmtDate(todayISO())} &middot; ${groupes.length} membre(s) concerne(s) &middot; ${enAttente.length} pret(s) en attente de remboursement</div>
     ${sections}
     <h2>Total en attente</h2>
