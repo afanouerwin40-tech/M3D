@@ -39,6 +39,41 @@ function telechargerFichier(blob, nomFichier) {
   // couper le telechargement en cours sur certains navigateurs.
   setTimeout(() => URL.revokeObjectURL(url), 60000);
 }
+
+// partagerOuTelechargerFichier() : point d'entree a utiliser pour tout
+// export destine a etre SAUVEGARDE par l'utilisateur (JSON de sauvegarde,
+// etc.). PROBLEME REEL corrige ici : une fois l'app installee sur l'ecran
+// d'accueil (mode "standalone"), telechargerFichier() ci-dessus devient
+// peu fiable sous iOS -- le WebKit standalone ignore souvent l'attribut
+// "download", et le repli target="_blank" fait alors NAVIGUER LA SEULE
+// FENETRE de l'app (il n'y a pas d'onglets en standalone) vers l'URL du
+// blob : l'app semble "planter" sur un ecran vide, sans moyen simple d'y
+// revenir. On privilegie donc la feuille de partage native du systeme
+// (Web Share API avec fichiers), qui fonctionne de facon fiable en mode
+// standalone et propose directement "Enregistrer dans Fichiers", Mail,
+// WhatsApp, etc. Le telechargement classique reste le repli pour les
+// navigateurs/PC qui ne supportent pas le partage de fichiers.
+async function partagerOuTelechargerFichier(blob, nomFichier, mimeType) {
+  try {
+    const file = new File([blob], nomFichier, {
+      type: mimeType || blob.type || "application/octet-stream",
+    });
+    if (navigator.canShare && navigator.canShare({ files: [file] })) {
+      await navigator.share({ files: [file], title: nomFichier });
+      return "partage";
+    }
+  } catch (err) {
+    // L'utilisateur a simplement ferme/annule la feuille de partage :
+    // ce n'est pas une erreur, on ne bascule pas sur le telechargement.
+    if (err && err.name === "AbortError") return "annule";
+    // Toute autre erreur (ex. navigator.share indisponible malgre le
+    // test canShare sur certains navigateurs) -> on retente via le
+    // telechargement classique ci-dessous plutot que de planter.
+  }
+  telechargerFichier(blob, nomFichier);
+  return "telecharge";
+}
+
 const initials = (m) =>
   (
     ((m.nom || m.prenom || "?")[0] || "?") + ((m.prenom || "")[0] || "")
@@ -2860,10 +2895,17 @@ async function exportBackup() {
     ],
     { type: "application/json" },
   );
-  telechargerFichier(blob, `m3d-sauvegarde-${todayISO()}.json`);
+  const resultat = await partagerOuTelechargerFichier(
+    blob,
+    `m3d-sauvegarde-${todayISO()}.json`,
+    "application/json",
+  );
+  if (resultat === "annule") return; // l'utilisateur a ferme la feuille de partage, rien a confirmer
   await setParam("derniere_sauvegarde", new Date().toISOString());
   toast(
-    "Sauvegarde prete. Si le fichier ne se telecharge pas tout seul, utilise le bouton Partager > Enregistrer dans Fichiers (pas 'Creer un PDF').",
+    resultat === "partage"
+      ? "Sauvegarde prete — choisis ou l'enregistrer (Fichiers, Mail...)."
+      : "Sauvegarde prete. Si le fichier ne se telecharge pas tout seul, utilise le bouton Partager > Enregistrer dans Fichiers (pas 'Creer un PDF').",
   );
 }
 async function importBackup(e) {
