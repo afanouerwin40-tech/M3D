@@ -1176,7 +1176,7 @@ async function openMemberDetail(id) {
     .reduce((a, d) => a + d.montant, 0);
   const sessionId = await getParam("session_active");
   const part = await isParticipant(id, sessionId);
-  openSheet(`
+  const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
     <h3>${esc(fullName(m))}</h3>
     <div class="small-note" style="margin-bottom:10px;">${m.id}${m.observations ? " &middot; " + esc(m.observations) : ""}</div>
