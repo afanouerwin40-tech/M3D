@@ -1,0 +1,402 @@
+--- M3D/js/db.js	2026-08-16 12:59:41.859511422 +0000
++++ M3D_work/js/db.js	2026-08-16 18:02:59.205108138 +0000
+@@ -143,6 +143,95 @@
+   prets_membres:
+     "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+ });
++
++// Version 6 : les listes personnalisees deviennent des "activites" a part
++// entiere -- une activite peut desormais avoir PLUSIEURS postes financiers
++// (frais), chaque membre peut n'en choisir qu'une partie, et chaque
++// paiement recu est trace individuellement (montant, date, commentaire)
++// au lieu d'un simple booleen "paye". Meme principe que le module
++// cotisations : rien n'est jamais ecrase, le montant paye se recalcule
++// toujours a partir de l'historique (liste_paiements est la seule source
++// de verite pour l'argent d'une activite, comme paiements l'est pour les
++// cotisations).
++//
++// Schema additif uniquement : aucune table existante n'est supprimee ni
++// renommee, donc aucun risque pour les listes deja creees. "listes" et
++// "liste_membres" recoivent de nouveaux champs (date_limite, cloturee,
++// frais_choisis) qui n'ont pas besoin d'etre declares ici -- Dexie
++// n'exige une declaration que pour les champs interroges via .where().
++db.version(6)
++  .stores({
++    membres: "id, nom, prenom, statut, mois_anniversaire",
++    sessions: "id, nom",
++    dimanches: "id, id_session, date, statut",
++    anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
++    paiements: "id, id_dimanche, id_membre",
++    remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
++    caisse_mouvements: "id, date, type",
++    parametres: "cle",
++    activity_log: "++seq, date, entite, action",
++    listes: "id, nom, date, archivee",
++    liste_membres: "id, id_liste, id_membre",
++    prets_membres:
++      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
++    liste_frais: "id, id_liste",
++    liste_paiements: "id, id_liste, id_membre",
++  })
++  .upgrade(async (tx) => {
++    // migrateListesData() : convertit l'ancien modele (un seul
++    // "montant_demande" sur la liste + un booleen "paye" par membre) vers
++    // le nouveau (plusieurs frais + historique de paiements), sans rien
++    // perdre. Idempotent : si une liste a deja un frais migre, on la
++    // saute (permet de relancer l'upgrade sans dupliquer les donnees).
++    const listes = await tx.listes.toArray();
++    for (const liste of listes) {
++      if (!liste.montant_demande) continue; // rien a migrer sur cette liste
++
++      const fraisExistants = await tx.liste_frais
++        .where("id_liste")
++        .equals(liste.id)
++        .count();
++      if (fraisExistants > 0) continue; // deja migre
++
++      // L'ancien montant unique devient le premier poste "Participation" --
++      // un cas particulier du nouveau systeme a frais multiples. L'ancienne
++      // UI continue par ailleurs de lire liste.montant_demande directement,
++      // donc rien ne change visuellement tant que l'ecran n'est pas mis a
++      // jour (etape suivante).
++      const idFrais = uid();
++      await tx.liste_frais.add({
++        id: idFrais,
++        id_liste: liste.id,
++        libelle: "Participation",
++        montant: liste.montant_demande,
++        ordre: 0,
++      });
++
++      const membres = await tx.liste_membres
++        .where("id_liste")
++        .equals(liste.id)
++        .toArray();
++      for (const lm of membres) {
++        await tx.liste_membres.update(lm.id, { frais_choisis: [idFrais] });
++        if (lm.paye) {
++          // L'ancien systeme ne gardait ni date ni trace du paiement recu.
++          // On cree une ligne d'historique retroactive datee de la
++          // creation de la liste (meilleure estimation disponible), pour
++          // qu'aucun montant deja encaisse ne disparaisse du nouveau calcul.
++          await tx.liste_paiements.add({
++            id: uid(),
++            id_liste: liste.id,
++            id_membre: lm.id_membre,
++            montant: liste.montant_demande,
++            date: liste.date_creation || liste.date || todayISO(),
++            heure: null,
++            commentaire: "Paiement migre automatiquement (ancien systeme)",
++          });
++        }
++      }
++    }
++  });
++
+ // uid() : genere un identifiant unique. crypto.randomUUID() n'existe pas
+ // avant Safari 15.4 (donc absent sur iOS 12, comme sur un iPad mini 2).
+ // On utilise crypto.getRandomValues (supporte depuis Safari 6 / iOS 6.1)
+@@ -1050,6 +1139,7 @@
+   nom,
+   description,
+   date,
++  date_limite,
+   couleur,
+   icone,
+   montant_demande,
+@@ -1061,6 +1151,9 @@
+     nom: nom.trim(),
+     description: (description || "").trim(),
+     date: date || todayISO(),
++    // date_limite : facultative -- une activite sans date limite reste
++    // ouverte indefiniment (voir activiteEstOuverte).
++    date_limite: date_limite || null,
+     couleur: couleur || "#2563EB",
+     icone: icone || "star",
+     montant_demande: montant_demande || null,
+@@ -1093,8 +1186,27 @@
+     id: newId,
+     nom: src.nom + " (copie)",
+     archivee: false,
++    cloturee: false,
+     date_creation: todayISO(),
+   });
++
++  // On copie la structure des frais (libelle + montant), mais jamais
++  // l'historique de paiement : une activite dupliquee est une nouvelle
++  // activite, elle recommence sans argent deja recu.
++  const anciensFrais = await listeFraisAll(id);
++  const correspondanceFrais = {}; // ancien id_frais -> nouvel id_frais
++  for (const f of anciensFrais) {
++    const nouvelId = uid();
++    correspondanceFrais[f.id] = nouvelId;
++    await db.liste_frais.add({
++      id: nouvelId,
++      id_liste: newId,
++      libelle: f.libelle,
++      montant: f.montant,
++      ordre: f.ordre,
++    });
++  }
++
+   const membres = await db.liste_membres.where("id_liste").equals(id).toArray();
+   for (const lm of membres) {
+     await db.liste_membres.add({
+@@ -1102,6 +1214,11 @@
+       id_liste: newId,
+       id_membre: lm.id_membre,
+       presence: "attente",
++      // Le choix des frais est reporte (adapte aux nouveaux id de frais),
++      // mais chacun repart avec paye = 0 puisqu'aucun paiement n'est copie.
++      frais_choisis: (lm.frais_choisis || [])
++        .map((fid) => correspondanceFrais[fid])
++        .filter(Boolean),
+     });
+   }
+   await log("liste", "dupliquee", newId);
+@@ -1124,6 +1241,9 @@
+             _inscriptionId: ins.id,
+             presence: ins.presence || "attente",
+             paye: !!ins.paye,
++            // frais_choisis (v6) : quels postes financiers concernent ce
++            // membre pour cette activite -- voir calculerMontantAttendu.
++            frais_choisis: ins.frais_choisis || [],
+           }
+         : null,
+     )
+@@ -1177,6 +1297,235 @@
+ }
+ 
+ // ---------------------------------------------------------------
++// FRAIS D'ACTIVITE (v6) — postes financiers d'une liste/activite. Une
++// activite peut n'avoir aucun frais (simple liste de participants sans
++// argent), un seul (cas historique "Participation"), ou plusieurs
++// (participation + piscine + transport...). Chaque membre choisit ensuite
++// lesquels le concernent : le montant attendu se calcule TOUJOURS a partir
++// de ce choix, il n'est jamais fige sur la ligne du membre.
++// ---------------------------------------------------------------
++async function listeFraisAll(idListe) {
++  const frais = await db.liste_frais
++    .where("id_liste")
++    .equals(idListe)
++    .toArray();
++  return frais.sort((a, b) => (a.ordre || 0) - (b.ordre || 0));
++}
++
++async function ajouterFraisListe(idListe, { libelle, montant, ordre } = {}) {
++  if (!libelle || !libelle.trim())
++    throw new Error("Le libelle du frais est obligatoire");
++  const m = Number(montant);
++  if (!Number.isFinite(m) || m < 0) throw new Error("Montant de frais invalide");
++  const id = uid();
++  const nbExistants = await db.liste_frais
++    .where("id_liste")
++    .equals(idListe)
++    .count();
++  await db.liste_frais.add({
++    id,
++    id_liste: idListe,
++    libelle: libelle.trim(),
++    montant: m,
++    ordre: ordre ?? nbExistants,
++  });
++  await log("liste_frais", "cree", `${idListe}:${id}`);
++  return id;
++}
++
++// modifierFraisListe : change le libelle/montant d'un frais SANS jamais
++// toucher a liste_paiements -- l'historique deja encaisse reste intact,
++// seul le montant attendu (recalcule a la volee) evolue pour la suite.
++async function modifierFraisListe(idFrais, patch) {
++  if (patch.montant !== undefined) {
++    const m = Number(patch.montant);
++    if (!Number.isFinite(m) || m < 0)
++      throw new Error("Montant de frais invalide");
++    patch.montant = m;
++  }
++  await db.liste_frais.update(idFrais, patch);
++  await log("liste_frais", "modifie", idFrais);
++}
++
++async function supprimerFraisListe(idFrais) {
++  await db.liste_frais.delete(idFrais);
++  // Un frais supprime doit disparaitre des choix de chaque participant qui
++  // l'avait selectionne, sinon un id de frais fantome resterait dans
++  // frais_choisis et fausserait le calcul du montant attendu.
++  const membres = await db.liste_membres.toArray();
++  for (const lm of membres) {
++    if (lm.frais_choisis && lm.frais_choisis.includes(idFrais)) {
++      await db.liste_membres.update(lm.id, {
++        frais_choisis: lm.frais_choisis.filter((f) => f !== idFrais),
++      });
++    }
++  }
++  await log("liste_frais", "supprime", idFrais);
++}
++
++// definirFraisChoisisMembre : enregistre quels postes financiers concernent
++// ce membre pour cette activite (ex : Jean prend "Participation" +
++// "Piscine" mais pas "Transport"). C'est cette selection, et elle seule,
++// qui determine son montant attendu.
++async function definirFraisChoisisMembre(idListe, idMembre, fraisIds) {
++  const row = await db.liste_membres
++    .where("id_liste")
++    .equals(idListe)
++    .and((x) => x.id_membre === idMembre)
++    .first();
++  if (!row) return;
++  await db.liste_membres.update(row.id, { frais_choisis: fraisIds || [] });
++}
++
++// calculerMontantAttendu : somme des frais choisis par le membre. Une
++// activite "gratuite" (aucun frais defini, ou membre n'ayant rien choisi)
++// renvoie naturellement 0 -- les champs financiers ne sont donc jamais
++// obligatoires pour une activite.
++async function calculerMontantAttendu(idListe, idMembre) {
++  const row = await db.liste_membres
++    .where("id_liste")
++    .equals(idListe)
++    .and((x) => x.id_membre === idMembre)
++    .first();
++  if (!row || !row.frais_choisis || !row.frais_choisis.length) return 0;
++  const frais = await listeFraisAll(idListe);
++  const parId = Object.fromEntries(frais.map((f) => [f.id, f]));
++  return row.frais_choisis.reduce(
++    (total, fid) => total + (parId[fid] ? parId[fid].montant : 0),
++    0,
++  );
++}
++
++// ---------------------------------------------------------------
++// PAIEMENTS D'ACTIVITE (v6) — historique reel, sur le meme principe que le
++// module cotisations : on n'ecrase jamais un montant, on ajoute une ligne.
++// Le montant paye et le statut se recalculent toujours a partir de cet
++// historique, jamais stockes tels quels.
++// ---------------------------------------------------------------
++async function historiquePaiementsListe(idListe, idMembre) {
++  const rows = await db.liste_paiements
++    .where("id_liste")
++    .equals(idListe)
++    .and((x) => x.id_membre === idMembre)
++    .toArray();
++  return rows.sort((a, b) =>
++    (b.date + (b.heure || "")).localeCompare(a.date + (a.heure || "")),
++  );
++}
++
++async function calculerMontantPaye(idListe, idMembre) {
++  const historique = await historiquePaiementsListe(idListe, idMembre);
++  return historique.reduce((total, p) => total + p.montant, 0);
++}
++
++// getStatutPaiementActivite : SEUL endroit ou la regle "non paye / partiel /
++// paye / surpaye" est ecrite. Toute l'app (tableau des participants,
++// dashboard, export) doit passer par cette fonction pour rester coherente
++// -- on evite ainsi de dupliquer ce calcul a plusieurs endroits.
++function getStatutPaiementActivite(attendu, paye) {
++  if (paye <= 0) return "non_paye";
++  if (paye < attendu) return "partiel";
++  if (paye === attendu) return "paye";
++  return "surpaye";
++}
++
++// infosParticipantActivite : point d'entree unique pour l'UI -- regroupe
++// attendu/paye/reste/statut/historique d'un participant en un seul appel,
++// pour eviter que chaque ecran ne refasse ses propres calculs.
++async function infosParticipantActivite(idListe, idMembre) {
++  const [attendu, historique] = await Promise.all([
++    calculerMontantAttendu(idListe, idMembre),
++    historiquePaiementsListe(idListe, idMembre),
++  ]);
++  const paye = historique.reduce((total, p) => total + p.montant, 0);
++  return {
++    attendu,
++    paye,
++    reste: Math.max(0, attendu - paye),
++    statut: getStatutPaiementActivite(attendu, paye),
++    historique,
++  };
++}
++
++// ajouterPaiementListeMembre : enregistre UNE nouvelle ligne de paiement
++// (jamais un remplacement du montant precedent). C'est la seule fonction a
++// utiliser pour encaisser de l'argent sur une activite -- elle garantit
++// que l'historique (section 6 du cahier des charges) est toujours complet.
++async function ajouterPaiementListeMembre(
++  idListe,
++  idMembre,
++  { montant, commentaire } = {},
++) {
++  const m = Number(montant);
++  if (!Number.isFinite(m) || m <= 0)
++    throw new Error("Montant de paiement invalide");
++  const membreExiste = await db.membres.get(idMembre);
++  if (!membreExiste) throw new Error("Membre introuvable");
++
++  const id = uid();
++  const maintenant = new Date();
++  await db.liste_paiements.add({
++    id,
++    id_liste: idListe,
++    id_membre: idMembre,
++    montant: m,
++    date: todayISO(),
++    heure: maintenant.toTimeString().slice(0, 5),
++    commentaire: (commentaire || "").trim(),
++  });
++  await log("liste_paiement", "ajoute", `${idListe}:${idMembre}:${m}`);
++  return id;
++}
++
++// ---------------------------------------------------------------
++// CLOTURE D'ACTIVITE (v6) — la date limite ne supprime jamais rien, elle
++// change seulement ce que l'utilisateur peut faire (inscription,
++// paiement) ; un administrateur peut toujours forcer la reouverture.
++// ---------------------------------------------------------------
++// activiteEstOuverte : le flag manuel "cloturee" (force par un
++// administrateur) a toujours priorite sur le calcul automatique par date.
++// Sans flag manuel, l'activite reste ouverte tant qu'aucune date limite
++// n'est definie ou qu'elle n'est pas encore depassee.
++function activiteEstOuverte(liste) {
++  if (typeof liste.cloturee === "boolean") return !liste.cloturee;
++  if (!liste.date_limite) return true;
++  return todayISO() <= liste.date_limite;
++}
++
++async function clotureActivite(idListe, cloturee) {
++  await db.listes.update(idListe, { cloturee });
++  await log("liste", cloturee ? "cloturee" : "reouverte", idListe);
++}
++
++// ---------------------------------------------------------------
++// STATISTIQUES D'ACTIVITE (v6) — pour le dashboard. Calculees a la demande
++// a partir des memes fonctions centralisees ci-dessus, donc toujours
++// coherentes avec ce qu'affiche le tableau des participants.
++// ---------------------------------------------------------------
++async function statistiquesActivite(idListe) {
++  const membres = await membresDeListe(idListe);
++  const infos = await Promise.all(
++    membres.map((m) => infosParticipantActivite(idListe, m.id)),
++  );
++  const montantAttendu = infos.reduce((a, i) => a + i.attendu, 0);
++  const montantEncaisse = infos.reduce((a, i) => a + i.paye, 0);
++  return {
++    participants: membres.length,
++    payes: infos.filter((i) => i.statut === "paye").length,
++    partiels: infos.filter((i) => i.statut === "partiel").length,
++    nonPayes: infos.filter((i) => i.statut === "non_paye").length,
++    surpayes: infos.filter((i) => i.statut === "surpaye").length,
++    montantAttendu,
++    montantEncaisse,
++    resteAEncaisser: Math.max(0, montantAttendu - montantEncaisse),
++    tauxPaiement:
++      montantAttendu > 0
++        ? Math.round((montantEncaisse / montantAttendu) * 1000) / 10
++        : 0,
++  };
++}
++
++// ---------------------------------------------------------------
+ // RAPPORT GENERAL — toutes les statistiques utilisees par le tableau de
+ // bord et les exports (PDF/Excel) du rapport complet. Rassemble ici pour
+ // n'avoir cette logique ecrite qu'une seule fois.

@@ -1,0 +1,63 @@
+--- M3D/css/style.css	2026-08-16 12:59:41.856345532 +0000
++++ M3D_work/css/style.css	2026-08-16 13:25:32.600437963 +0000
+@@ -291,4 +291,57 @@
+    visuellement avec le reste de l'interface. */
+ @supports not (aspect-ratio: 1) {
+   .kpi { min-height:84px; }
+-}
+\ No newline at end of file
++}
++
++/* ---------------------------------------------------------------
++   ACTIVITES (v6) — frais multiples + paiements historises. On reutilise
++   volontairement les composants existants (.card, .chip-row, .btn-chip,
++   .field, .toggle) plutot que d'inventer un nouveau vocabulaire visuel :
++   la mission demande explicitement de rester coherent avec le design deja
++   en place (theme clair/sombre inclus, via les variables --* ci-dessus).
++--------------------------------------------------------------- */
++.activite-stats-grid { display:grid; grid-template-columns:repeat(2, 1fr); gap:8px; margin:14px 0; }
++@media (min-width:520px) { .activite-stats-grid { grid-template-columns:repeat(4, 1fr); } }
++.activite-stat { background:var(--surface-2); border-radius:12px; padding:10px 12px; }
++.activite-stat .lbl { font-size:11px; color:var(--text-3); font-weight:600; text-transform:uppercase; letter-spacing:.02em; }
++.activite-stat .val { font-family:var(--font-display); font-size:17px; font-weight:700; margin-top:3px; line-height:1.1; }
++
++/* Statuts de paiement d'un participant -- non_paye reutilise .badge-no,
++   paye reutilise .badge-yes (deja utilises ailleurs dans l'app), seuls
++   "partiel" et "surpaye" sont de nouvelles variantes. */
++.badge-partiel { background:var(--bg-warning); color:var(--warning); }
++.badge-surpaye { background:var(--bg-purple); color:var(--purple); }
++
++.frais-chip { display:flex; align-items:center; justify-content:space-between; padding:9px 4px; border-bottom:1px solid var(--border); gap:10px; }
++.frais-chip:last-child { border-bottom:none; }
++.frais-chip .name { font-size:14.5px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
++.frais-chip .amount { font-size:13.5px; color:var(--text-2); font-weight:600; white-space:nowrap; }
++.frais-chip-actions { display:flex; gap:6px; flex-shrink:0; }
++
++.icon-btn { border:1px solid var(--border); background:var(--surface); color:var(--text-2); border-radius:10px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; padding:0; }
++.icon-btn.danger { color:var(--danger); border-color:var(--bg-danger); }
++
++/* Tableau des participants : sur un ecran etroit un vrai <table> devient
++   illisible (la mission le demande explicitement), donc chaque
++   participant est une petite carte empilee -- meme logique responsive que
++   .chip-row deja utilise ailleurs dans l'app, juste avec plus de contenu
++   par ligne (montants + actions). */
++.participant-card { padding:12px 4px; border-bottom:1px solid var(--border); }
++.participant-card:last-child { border-bottom:none; }
++.participant-top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; }
++.participant-top .name { font-size:15px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
++.participant-amounts { font-size:13px; color:var(--text-3); margin-bottom:9px; }
++.participant-amounts b { color:var(--text-2); font-weight:600; }
++.participant-actions { display:flex; flex-wrap:wrap; gap:6px; }
++
++.paiement-histo-item { display:flex; justify-content:space-between; align-items:baseline; padding:9px 0; border-bottom:1px solid var(--border); font-size:14px; gap:10px; }
++.paiement-histo-item:last-child { border-bottom:none; }
++.paiement-histo-item .montant { font-weight:700; color:var(--success); flex-shrink:0; }
++.paiement-histo-item .meta { color:var(--text-3); font-size:12.5px; }
++
++.frais-check-row { display:flex; align-items:center; gap:10px; padding:9px 4px; border-bottom:1px solid var(--border); }
++.frais-check-row:last-child { border-bottom:none; }
++.frais-check-row label { flex:1; font-size:14.5px; cursor:pointer; }
++.frais-check-row input[type="checkbox"] { width:18px; height:18px; flex-shrink:0; }
++
++.cloture-banner { background:var(--bg-warning); color:var(--warning); border-radius:12px; padding:10px 12px; font-size:13.5px; font-weight:600; margin:10px 0; display:flex; align-items:center; justify-content:space-between; gap:8px; }
+\ No newline at end of file

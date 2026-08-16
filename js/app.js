@@ -1912,11 +1912,13 @@ async function renderListesList() {
     filtered.map(async (l) => {
       const membres = await membresDeListe(l.id);
       const presents = membres.filter((m) => m.presence === "present").length;
-      const payes = membres.filter((m) => m.paye).length;
+      const frais = await listeFraisAll(l.id);
+      const stats = frais.length ? await statistiquesActivite(l.id) : null;
+      const fermee = !activiteEstOuverte(l);
       return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${safeColor(l.couleur)};">
       <div class="liste-card-top">
         <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
-        <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} membre${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}${l.montant_demande ? ` &middot; ${payes} paye${payes > 1 ? "s" : ""}` : ""}</div></div>
+        <div class="info"><div class="name">${esc(l.nom)}${fermee ? ` <span class="badge badge-no" style="margin-left:4px;">Cloturee</span>` : ""}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}${stats ? ` &middot; ${stats.payes} paye${stats.payes > 1 ? "s" : ""}/${membres.length}` : ""}</div></div>
       </div>
       ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
     </div>`;
@@ -1933,15 +1935,18 @@ async function renderListesList() {
 function openCreerListe() {
   const ov = openSheet(`
     <button class="sheet-close" data-close>&times;</button>
-    <h3>Nouvelle liste</h3>
+    <h3>Nouvelle activite</h3>
     <div class="field"><label>Nom</label><input id="l_nom" type="text" placeholder="Ex. Sortie jeunesse, Camp 2026..."></div>
     <div class="field"><label>Description</label><input id="l_desc" type="text" placeholder="Facultatif"></div>
-    <div class="field"><label>Date</label><input id="l_date" type="date" value="${todayISO()}"></div>
+    <div class="field-row">
+      <div class="field"><label>Date de l'activite</label><input id="l_date" type="date" value="${todayISO()}"></div>
+      <div class="field"><label>Date limite (facultatif)</label><input id="l_date_limite" type="date"></div>
+    </div>
     <div class="field"><label>Couleur</label><div class="swatch-row" id="l_couleur_row">${LISTE_COULEURS.map((c, i) => `<button type="button" class="swatch ${i === 0 ? "active" : ""}" data-c="${c}" style="background:${c};"></button>`).join("")}</div></div>
     <div class="field"><label>Icone</label><div class="swatch-row" id="l_icone_row">${LISTE_ICONE_KEYS.map((k, i) => `<button type="button" class="swatch-icon ${i === 0 ? "active" : ""}" data-i="${k}">${listeIconSVG(k, 18)}</button>`).join("")}</div></div>
-    <div class="field"><label>Montant demande (FCFA, facultatif)</label><input id="l_montant" type="number" placeholder="Laisser vide si aucun"></div>
     <div class="field"><label>Notes</label><input id="l_notes" type="text" placeholder="Facultatif"></div>
-    <button class="btn btn-primary" id="l_save">Creer la liste</button>
+    <div class="small-note">Les frais (participation, transport, repas...) se configurent juste apres la creation, depuis la fiche de l'activite. Une activite sans frais fonctionne normalement : elle sert juste a suivre des participants.</div>
+    <button class="btn btn-primary" id="l_save" style="margin-top:12px;">Creer l'activite</button>
   `);
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
   let couleur = LISTE_COULEURS[0],
@@ -1970,68 +1975,110 @@ function openCreerListe() {
       toast("Le nom est obligatoire", "error");
       return;
     }
+    const dateLimite = document.getElementById("l_date_limite").value || null;
+    const date = document.getElementById("l_date").value || todayISO();
+    if (dateLimite && dateLimite > date) {
+      // Section 24 du cahier des charges : date limite incoherente. La
+      // date limite d'inscription/paiement ne peut pas tomber APRES le
+      // jour de l'activite elle-meme.
+      toast("La date limite doit etre avant ou le jour de l'activite", "error");
+      return;
+    }
     const id = await creerListe({
       nom,
       description: document.getElementById("l_desc").value,
-      date: document.getElementById("l_date").value || todayISO(),
+      date,
+      date_limite: dateLimite,
       couleur,
       icone,
-      montant_demande:
-        Number(document.getElementById("l_montant").value) || null,
       notes: document.getElementById("l_notes").value,
     });
     closeSheet();
-    toast("Liste creee");
+    toast("Activite creee");
     renderListes();
     setTimeout(() => openListeDetail(id), 200);
   });
 }
 
 let listeDetailQuery = "";
-let listeDetailSort = "alpha";
+let listeDetailSort = "alpha"; // alpha | presence | paye | reste | statut
+let listeDetailFiltreStatut = "tous"; // tous | non_paye | partiel | paye | surpaye
 async function openListeDetail(id) {
   listeDetailQuery = "";
   listeDetailSort = "alpha";
+  listeDetailFiltreStatut = "tous";
   await renderListeDetailSheet(id);
 }
-// renderListeDetailSheet : construit la coquille complete de la fenetre
-// (appelee seulement a l'ouverture, ou apres tri/archive/suppression).
+
+// Vocabulaire d'affichage pour getStatutPaiementActivite() (db.js) --
+// c'est la seule fonction qui decide du statut, ici on se contente de le
+// traduire en libelle/couleur pour l'ecran.
+const STATUT_PAIEMENT_LABEL = {
+  non_paye: "Non paye",
+  partiel: "Partiel",
+  paye: "Paye",
+  surpaye: "Surpaye",
+};
+const STATUT_PAIEMENT_BADGE = {
+  non_paye: "badge-no",
+  partiel: "badge-partiel",
+  paye: "badge-yes",
+  surpaye: "badge-surpaye",
+};
+
+// renderListeDetailSheet : construit la coquille complete de la fenetre.
+// Appelee a l'ouverture, et apres toute action qui change la STRUCTURE de
+// l'ecran (ajout/suppression d'un frais, cloture, tri, changement de
+// filtre) -- pour tout le reste (paiement, choix de frais d'un membre,
+// ajout/retrait d'un participant), refreshListeDetailBody() suffit et
+// preserve le focus du champ de recherche.
 async function renderListeDetailSheet(id) {
   const l = await db.listes.get(id);
   if (!l) return;
-  const membres = await membresDeListe(id);
-  const presents = membres.filter((m) => m.presence === "present").length;
-  const absents = membres.filter((m) => m.presence === "absent").length;
-  const payes = membres.filter((m) => m.paye).length;
+  const ouverte = activiteEstOuverte(l);
+  const frais = await listeFraisAll(id);
 
   const html = `
     <button class="sheet-close" data-close>&times;</button>
     <div class="liste-detail-head" style="border-left:4px solid ${safeColor(l.couleur)};padding-left:12px;">
       <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone, 22)}</span>
-      <div><h3 style="margin:0;">${esc(l.nom)}</h3><div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.archivee ? " &middot; Archivee" : ""}</div></div>
+      <div><h3 style="margin:0;">${esc(l.nom)}</h3><div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.date_limite ? " &middot; Limite : " + fmtDate(l.date_limite) : ""}${l.archivee ? " &middot; Archivee" : ""}</div></div>
     </div>
+    ${!ouverte ? `<div class="cloture-banner"><span>Activite cloturee -- les inscriptions sont fermees mais les paiements deja enregistres restent modifiables.</span></div>` : ""}
     ${l.description ? `<p class="small-note">${esc(l.description)}</p>` : ""}
-    <div class="detail-row"><span class="k">Membres inscrits</span><span class="v">${membres.length}</span></div>
-    <div class="detail-row"><span class="k">Presents</span><span class="v">${presents}</span></div>
-    <div class="detail-row"><span class="k">Absents</span><span class="v">${absents}</span></div>
-    ${l.montant_demande ? `<div class="detail-row"><span class="k">Ont paye leur participation</span><span class="v">${payes} / ${membres.length}</span></div>` : ""}
-    ${l.montant_demande ? `<div class="detail-row"><span class="k">Montant demande</span><span class="v">${fmt(l.montant_demande)}</span></div>` : ""}
+
+    <div id="ld_stats"></div>
+
+    <div class="section-title" style="margin-top:6px;"><h2>Frais de l'activite</h2><button class="link" id="ld_add_frais">+ Ajouter</button></div>
+    <div id="ld_frais"></div>
+    ${!frais.length ? `<div class="small-note">Aucun frais defini : cette activite fonctionne comme une simple liste de participants, sans argent a suivre.</div>` : ""}
     ${l.notes ? `<div class="detail-row"><span class="k">Notes</span><span class="v">${esc(l.notes)}</span></div>` : ""}
 
-    <div class="section-title" style="margin-top:16px;"><h2>Membres de la liste</h2></div>
-    <input class="search" id="ld_search" placeholder="Rechercher / ajouter un membre..." value="${esc(listeDetailQuery)}">
-    <div class="row" style="border:none;padding:6px 4px;justify-content:flex-start;gap:8px;">
-      <button class="btn-chip ${listeDetailSort === "alpha" ? "active" : ""}" id="ld_sort_alpha">A-Z</button>
-      <button class="btn-chip ${listeDetailSort === "presence" ? "active" : ""}" id="ld_sort_presence">Presence</button>
+    <div class="section-title" style="margin-top:16px;"><h2>Participants</h2></div>
+    <input class="search" id="ld_search" placeholder="${ouverte ? "Rechercher / ajouter un membre..." : "Rechercher un participant..."}" value="${esc(listeDetailQuery)}">
+    <div class="row" style="border:none;padding:0 4px 6px;justify-content:flex-start;gap:6px;flex-wrap:wrap;">
+      <button class="btn-chip ${listeDetailFiltreStatut === "tous" ? "active" : ""}" data-filtre="tous">Tous</button>
+      <button class="btn-chip ${listeDetailFiltreStatut === "paye" ? "active" : ""}" data-filtre="paye">Paye</button>
+      <button class="btn-chip ${listeDetailFiltreStatut === "partiel" ? "active" : ""}" data-filtre="partiel">Partiel</button>
+      <button class="btn-chip ${listeDetailFiltreStatut === "non_paye" ? "active" : ""}" data-filtre="non_paye">Non paye</button>
+      <button class="btn-chip ${listeDetailFiltreStatut === "surpaye" ? "active" : ""}" data-filtre="surpaye">Surpaye</button>
+    </div>
+    <div class="row" style="border:none;padding:0 4px 10px;justify-content:flex-start;gap:6px;flex-wrap:wrap;">
+      <button class="btn-chip ${listeDetailSort === "alpha" ? "active" : ""}" data-tri="alpha">Nom</button>
+      <button class="btn-chip ${listeDetailSort === "paye" ? "active" : ""}" data-tri="paye">Montant paye</button>
+      <button class="btn-chip ${listeDetailSort === "reste" ? "active" : ""}" data-tri="reste">Reste</button>
+      <button class="btn-chip ${listeDetailSort === "statut" ? "active" : ""}" data-tri="statut">Statut</button>
+      <button class="btn-chip ${listeDetailSort === "presence" ? "active" : ""}" data-tri="presence">Presence</button>
     </div>
     <div id="ld_addResults"></div>
     <div id="ld_members"></div>
 
     <div class="sheet-actions" style="margin-top:16px;">
       <button class="btn btn-ghost" id="ld_export_pdf" style="margin-bottom:8px;">Exporter en PDF</button>
-      <button class="btn btn-ghost" id="ld_duplicate" style="margin-bottom:8px;">Dupliquer cette liste</button>
+      <button class="btn btn-ghost" id="ld_cloture" style="margin-bottom:8px;">${ouverte ? "Cloturer l'activite" : "Reouvrir l'activite"}</button>
+      <button class="btn btn-ghost" id="ld_duplicate" style="margin-bottom:8px;">Dupliquer cette activite</button>
       <button class="btn btn-ghost" id="ld_archive" style="margin-bottom:8px;">${l.archivee ? "Desarchiver" : "Archiver"}</button>
-      <button class="btn btn-ghost" id="ld_delete" style="color:var(--danger);">Supprimer la liste</button>
+      <button class="btn btn-ghost" id="ld_delete" style="color:var(--danger);">Supprimer l'activite</button>
     </div>
   `;
   let ov;
@@ -2047,39 +2094,57 @@ async function renderListeDetailSheet(id) {
   }
 
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
-  // Frapper dans la recherche ne rafraichit QUE la liste des membres, jamais
-  // la coquille entiere : sinon le champ de saisie perdrait le focus a
-  // chaque lettre tapee.
   ov.querySelector("#ld_search").addEventListener("input", (e) => {
     listeDetailQuery = e.target.value;
     refreshListeDetailBody(id);
   });
-  ov.querySelector("#ld_sort_alpha").addEventListener("click", () => {
-    listeDetailSort = "alpha";
-    refreshListeDetailBody(id);
-    ov.querySelector("#ld_sort_alpha").classList.add("active");
-    ov.querySelector("#ld_sort_presence").classList.remove("active");
-  });
-  ov.querySelector("#ld_sort_presence").addEventListener("click", () => {
-    listeDetailSort = "presence";
-    refreshListeDetailBody(id);
-    ov.querySelector("#ld_sort_presence").classList.add("active");
-    ov.querySelector("#ld_sort_alpha").classList.remove("active");
-  });
+  ov.querySelectorAll("[data-filtre]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      listeDetailFiltreStatut = btn.dataset.filtre;
+      ov.querySelectorAll("[data-filtre]").forEach((b) =>
+        b.classList.toggle("active", b === btn),
+      );
+      refreshListeDetailBody(id);
+    }),
+  );
+  ov.querySelectorAll("[data-tri]").forEach((btn) =>
+    btn.addEventListener("click", () => {
+      listeDetailSort = btn.dataset.tri;
+      ov.querySelectorAll("[data-tri]").forEach((b) =>
+        b.classList.toggle("active", b === btn),
+      );
+      refreshListeDetailBody(id);
+    }),
+  );
+
+  ov.querySelector("#ld_add_frais").addEventListener("click", () =>
+    openFraisForm(id),
+  );
 
   ov.querySelector("#ld_export_pdf").addEventListener("click", () =>
     exportListePDF(id),
   );
+  ov.querySelector("#ld_cloture").addEventListener("click", async () => {
+    // ouverte capture l'etat AVANT clic : on cloture si elle etait
+    // ouverte, on reouvre (exceptionnellement) si elle etait fermee.
+    await clotureActivite(id, ouverte);
+    toast(ouverte ? "Activite cloturee" : "Activite reouverte");
+    renderListeDetailSheet(id);
+  });
   ov.querySelector("#ld_duplicate").addEventListener("click", async () => {
     const newId = await dupliquerListe(id);
     closeSheet();
-    toast("Liste dupliquee");
+    toast("Activite dupliquee");
     renderListes();
     setTimeout(() => openListeDetail(newId), 200);
   });
   ov.querySelector("#ld_archive").addEventListener("click", async () => {
     await archiverListe(id, !l.archivee);
-    toast(l.archivee ? "Liste desarchivee" : "Liste archivee");
+    toast(
+      l.archivee
+        ? "Activite desarchivee"
+        : "Activite archivee (les donnees restent consultables)",
+    );
     closeSheet();
     renderListes();
   });
@@ -2090,24 +2155,104 @@ async function renderListeDetailSheet(id) {
     if (!ok) return;
     await supprimerListe(id);
     closeSheet();
-    toast("Liste supprimee");
+    toast("Activite supprimee");
     renderListes();
   });
 
   await refreshListeDetailBody(id);
 }
-// refreshListeDetailBody : ne touche qu'aux zones de resultats (#ld_addResults
-// et #ld_members), jamais au champ de recherche lui-meme -> le focus clavier
-// et la position du curseur sont preserves pendant la frappe.
+
+// refreshListeDetailBody : rafraichit les zones de contenu (#ld_stats,
+// #ld_frais, #ld_addResults, #ld_members) sans jamais toucher au champ de
+// recherche -> le focus clavier et la position du curseur sont preserves
+// pendant la frappe. C'est ici que vivent les calculs d'un seul coup pour
+// tous les participants, en reutilisant infosParticipantActivite() (db.js)
+// comme unique source de verite pour attendu/paye/reste/statut.
 async function refreshListeDetailBody(id) {
   const ov = sheetStack[sheetStack.length - 1];
   if (!ov || ov.dataset.listeId !== id) return;
   const l = await db.listes.get(id);
+  if (!l) return;
+  const ouverte = activiteEstOuverte(l);
+  const frais = await listeFraisAll(id);
   const membres = await membresDeListe(id);
   const q = listeDetailQuery.trim().toLowerCase();
 
+  // Un seul aller-retour pour calculer attendu/paye/reste/statut de TOUS
+  // les participants -- evite de refaire ce calcul a plusieurs endroits
+  // (dashboard, tableau, tri, filtre partagent le meme resultat).
+  const infosParMembre = {};
+  await Promise.all(
+    membres.map(async (m) => {
+      infosParMembre[m.id] = await infosParticipantActivite(id, m.id);
+    }),
+  );
+
+  // --- Dashboard (section 11 du cahier des charges) ---
+  const statsBox = ov.querySelector("#ld_stats");
+  if (statsBox) {
+    const valeurs = Object.values(infosParMembre);
+    const payes = valeurs.filter((i) => i.statut === "paye").length;
+    const partiels = valeurs.filter((i) => i.statut === "partiel").length;
+    const nonPayes = valeurs.filter((i) => i.statut === "non_paye").length;
+    const attendu = valeurs.reduce((a, i) => a + i.attendu, 0);
+    const encaisse = valeurs.reduce((a, i) => a + i.paye, 0);
+    const taux =
+      attendu > 0 ? Math.round((encaisse / attendu) * 1000) / 10 : 0;
+    statsBox.innerHTML = `
+      <div class="activite-stats-grid">
+        <div class="activite-stat"><div class="lbl">Participants</div><div class="val">${membres.length}</div></div>
+        <div class="activite-stat"><div class="lbl">Payes</div><div class="val">${payes}</div></div>
+        <div class="activite-stat"><div class="lbl">Partiels</div><div class="val">${partiels}</div></div>
+        <div class="activite-stat"><div class="lbl">Non payes</div><div class="val">${nonPayes}</div></div>
+        ${
+          frais.length
+            ? `
+        <div class="activite-stat"><div class="lbl">Attendu</div><div class="val">${fmt(attendu)}</div></div>
+        <div class="activite-stat"><div class="lbl">Encaisse</div><div class="val">${fmt(encaisse)}</div></div>
+        <div class="activite-stat"><div class="lbl">Reste</div><div class="val">${fmt(Math.max(0, attendu - encaisse))}</div></div>
+        <div class="activite-stat"><div class="lbl">Taux</div><div class="val">${taux}%</div></div>`
+            : ""
+        }
+      </div>`;
+  }
+
+  // --- Liste des frais (section 3/14) ---
+  const fraisBox = ov.querySelector("#ld_frais");
+  if (fraisBox) {
+    fraisBox.innerHTML = frais
+      .map(
+        (f) => `
+      <div class="frais-chip" data-frais-id="${f.id}">
+        <span class="name">${esc(f.libelle)}</span>
+        <span class="amount">${fmt(f.montant)}</span>
+        <div class="frais-chip-actions">
+          <button class="icon-btn" data-edit-frais="${f.id}" aria-label="Modifier">&#9998;</button>
+          <button class="icon-btn danger" data-del-frais="${f.id}" aria-label="Supprimer">&times;</button>
+        </div>
+      </div>`,
+      )
+      .join("");
+    fraisBox.querySelectorAll("[data-edit-frais]").forEach((btn) =>
+      btn.addEventListener("click", () =>
+        openFraisForm(
+          id,
+          frais.find((f) => f.id === btn.dataset.editFrais),
+        ),
+      ),
+    );
+    fraisBox.querySelectorAll("[data-del-frais]").forEach((btn) =>
+      btn.addEventListener("click", async () => {
+        await supprimerFraisListe(btn.dataset.delFrais);
+        toast("Frais supprime");
+        renderListeDetailSheet(id);
+      }),
+    );
+  }
+
+  // --- Ajout d'un participant (recherche parmi les membres non inscrits) ---
   const addResultsBox = ov.querySelector("#ld_addResults");
-  if (q) {
+  if (q && ouverte) {
     const inscritsIds = new Set(membres.map((m) => m.id));
     const tousMembres = await listMembres();
     const candidats = tousMembres
@@ -2116,7 +2261,7 @@ async function refreshListeDetailBody(id) {
       )
       .slice(0, 6);
     addResultsBox.innerHTML = candidats.length
-      ? `<div class="small-note" style="margin:4px 0;">Ajouter a la liste :</div>` +
+      ? `<div class="small-note" style="margin:4px 0;">Ajouter a l'activite :</div>` +
         candidats
           .map(
             (m) => `
@@ -2134,48 +2279,77 @@ async function refreshListeDetailBody(id) {
         listeDetailQuery = "";
         const searchInput = ov.querySelector("#ld_search");
         if (searchInput) searchInput.value = "";
-        toast("Membre ajoute a la liste");
+        toast("Participant ajoute");
         refreshListeDetailBody(id);
         renderListesList();
       }),
     );
+  } else if (q && !ouverte) {
+    // Section 12 : activite cloturee -> inscription desactivee. On garde
+    // la recherche utilisable pour FILTRER les participants deja inscrits
+    // (juste en dessous), mais plus pour en ajouter de nouveaux.
+    addResultsBox.innerHTML = `<div class="small-note" style="margin:4px 0;">Activite cloturee : inscription desactivee.</div>`;
   } else {
     addResultsBox.innerHTML = "";
   }
 
+  // --- Filtre + tri des participants deja inscrits ---
   let shown = membres.filter((m) => fullName(m).toLowerCase().includes(q));
+  if (listeDetailFiltreStatut !== "tous") {
+    shown = shown.filter(
+      (m) => infosParMembre[m.id].statut === listeDetailFiltreStatut,
+    );
+  }
+  const ordrePresence = { present: 0, attente: 1, absent: 2 };
   if (listeDetailSort === "alpha")
     shown.sort((a, b) => fullName(a).localeCompare(fullName(b)));
-  else
-    shown.sort((a, b) =>
-      a.presence === b.presence
-        ? 0
-        : a.presence === "present"
-          ? -1
-          : b.presence === "present"
-            ? 1
-            : a.presence === "absent"
-              ? -1
-              : 1,
+  else if (listeDetailSort === "presence")
+    shown.sort(
+      (a, b) => ordrePresence[a.presence] - ordrePresence[b.presence],
     );
+  else if (listeDetailSort === "paye")
+    shown.sort((a, b) => infosParMembre[b.id].paye - infosParMembre[a.id].paye);
+  else if (listeDetailSort === "reste")
+    shown.sort(
+      (a, b) => infosParMembre[b.id].reste - infosParMembre[a.id].reste,
+    );
+  else if (listeDetailSort === "statut") {
+    const ordreStatut = { non_paye: 0, partiel: 1, surpaye: 2, paye: 3 };
+    shown.sort(
+      (a, b) =>
+        ordreStatut[infosParMembre[a.id].statut] -
+        ordreStatut[infosParMembre[b.id].statut],
+    );
+  }
+
   const membersBox = ov.querySelector("#ld_members");
   membersBox.innerHTML = shown.length
     ? shown
-        .map(
-          (m) => `
-    <div class="chip-row" data-membre="${m.id}">
-      <span class="name">${esc(fullName(m))}</span>
-      ${l.montant_demande ? `<button class="btn-chip ${m.paye ? "active" : ""}" data-paye="${m.id}" style="margin-right:4px;">${m.paye ? "Paye" : "Non paye"}</button>` : ""}
-      <button class="toggle ${m.presence === "present" ? "on" : m.presence === "absent" ? "off" : "wait"}" data-presence="${m.id}">${m.presence === "present" ? "Present" : m.presence === "absent" ? "Absent" : "En attente"}</button>
-      <button class="chip-remove" data-remove="${m.id}" aria-label="Retirer">&times;</button>
-    </div>`,
-        )
+        .map((m) => {
+          const info = infosParMembre[m.id];
+          return `
+    <div class="participant-card" data-membre="${m.id}">
+      <div class="participant-top">
+        <span class="name">${esc(fullName(m))}</span>
+        <span class="badge ${STATUT_PAIEMENT_BADGE[info.statut]}">${STATUT_PAIEMENT_LABEL[info.statut]}</span>
+      </div>
+      ${frais.length ? `<div class="participant-amounts">Attendu : <b>${fmt(info.attendu)}</b> &middot; Paye : <b>${fmt(info.paye)}</b> &middot; Reste : <b>${fmt(info.reste)}</b></div>` : ""}
+      <div class="participant-actions">
+        <button class="toggle ${m.presence === "present" ? "on" : m.presence === "absent" ? "off" : "wait"}" data-presence="${m.id}">${m.presence === "present" ? "Present" : m.presence === "absent" ? "Absent" : "En attente"}</button>
+        ${frais.length ? `<button class="btn-chip" data-choix-frais="${m.id}">Frais (${(m.frais_choisis || []).length}/${frais.length})</button>` : ""}
+        ${frais.length ? `<button class="btn-chip" data-payer="${m.id}">Enregistrer un paiement</button>` : ""}
+        ${info.historique.length ? `<button class="btn-chip" data-historique="${m.id}">Historique (${info.historique.length})</button>` : ""}
+        <button class="chip-remove" data-remove="${m.id}" aria-label="Retirer">&times;</button>
+      </div>
+    </div>`;
+        })
         .join("")
     : emptyHTML(
-        q
-          ? "Aucun membre inscrit ne correspond."
-          : "Aucun membre inscrit. Utilise la recherche ci-dessus pour en ajouter.",
+        q || listeDetailFiltreStatut !== "tous"
+          ? "Aucun participant ne correspond a cette recherche/ce filtre."
+          : "Aucun participant inscrit. Utilise la recherche ci-dessus pour en ajouter.",
       );
+
   membersBox.querySelectorAll("[data-presence]").forEach((btn) =>
     btn.addEventListener("click", async () => {
       const mid = btn.dataset.presence;
@@ -2190,53 +2364,237 @@ async function refreshListeDetailBody(id) {
       refreshListeDetailBody(id);
     }),
   );
-  membersBox.querySelectorAll("[data-paye]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      const mid = btn.dataset.paye;
-      const cur = membres.find((m) => m.id === mid).paye;
-      await definirPaiementListe(id, mid, !cur);
-      refreshListeDetailBody(id);
-    }),
+  membersBox.querySelectorAll("[data-choix-frais]").forEach((btn) =>
+    btn.addEventListener("click", () =>
+      openChoisirFraisMembre(
+        id,
+        membres.find((m) => m.id === btn.dataset.choixFrais),
+      ),
+    ),
+  );
+  membersBox.querySelectorAll("[data-payer]").forEach((btn) =>
+    btn.addEventListener("click", () =>
+      openAjouterPaiementActivite(
+        id,
+        membres.find((m) => m.id === btn.dataset.payer),
+      ),
+    ),
+  );
+  membersBox.querySelectorAll("[data-historique]").forEach((btn) =>
+    btn.addEventListener("click", () =>
+      openHistoriquePaiementsActivite(
+        id,
+        membres.find((m) => m.id === btn.dataset.historique),
+      ),
+    ),
   );
   membersBox.querySelectorAll("[data-remove]").forEach((btn) =>
     btn.addEventListener("click", async () => {
       await retirerMembreListe(id, btn.dataset.remove);
-      toast("Membre retire de la liste");
+      toast("Participant retire de l'activite");
       refreshListeDetailBody(id);
       renderListesList();
     }),
   );
 }
 
+// openFraisForm : creation OU modification d'un frais (meme formulaire) --
+// si fraisExistant est fourni, on pre-remplit et on modifie au lieu de
+// creer. Ouvert par-dessus la fiche d'activite (sheetStack empile), donc
+// closeSheet() ici ne ferme que ce petit formulaire.
+function openFraisForm(idListe, fraisExistant) {
+  const ov = openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>${fraisExistant ? "Modifier le frais" : "Ajouter un frais"}</h3>
+    <div class="field"><label>Libelle</label><input id="fr_libelle" type="text" placeholder="Ex. Participation, Transport, Repas..." value="${fraisExistant ? esc(fraisExistant.libelle) : ""}"></div>
+    <div class="field"><label>Montant (FCFA)</label><input id="fr_montant" type="number" min="0" value="${fraisExistant ? fraisExistant.montant : ""}"></div>
+    ${fraisExistant ? `<div class="small-note">Changer le montant ne modifie pas les paiements deja recus : seul le montant attendu des prochains calculs change.</div>` : ""}
+    <button class="btn btn-primary" id="fr_save" style="margin-top:12px;">Enregistrer</button>
+  `);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("#fr_save").addEventListener("click", async () => {
+    const libelle = ov.querySelector("#fr_libelle").value;
+    const montant = ov.querySelector("#fr_montant").value;
+    try {
+      if (fraisExistant) {
+        await modifierFraisListe(fraisExistant.id, { libelle: libelle.trim(), montant });
+      } else {
+        await ajouterFraisListe(idListe, { libelle, montant });
+      }
+    } catch (err) {
+      toast(err.message, "error");
+      return;
+    }
+    closeSheet();
+    toast(fraisExistant ? "Frais modifie" : "Frais ajoute");
+    renderListeDetailSheet(idListe);
+  });
+}
+
+// openChoisirFraisMembre : quels postes financiers concernent ce
+// participant (section 3 du cahier des charges -- un membre peut ne
+// choisir qu'une partie des frais proposes).
+async function openChoisirFraisMembre(idListe, membre) {
+  if (!membre) return;
+  const frais = await listeFraisAll(idListe);
+  const choisis = new Set(membre.frais_choisis || []);
+  const ov = openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>Frais de ${esc(fullName(membre))}</h3>
+    <div class="small-note" style="margin-bottom:8px;">Coche uniquement ce qui concerne ce participant : le montant attendu se recalcule automatiquement.</div>
+    <div id="fc_list">
+      ${frais
+        .map(
+          (f) => `
+      <div class="frais-check-row">
+        <input type="checkbox" id="fc_${f.id}" data-fc="${f.id}" ${choisis.has(f.id) ? "checked" : ""}>
+        <label for="fc_${f.id}">${esc(f.libelle)}</label>
+        <span class="amount">${fmt(f.montant)}</span>
+      </div>`,
+        )
+        .join("")}
+    </div>
+    <div class="detail-row" style="margin-top:6px;"><span class="k">Total selectionne</span><span class="v" id="fc_total">${fmt(frais.filter((f) => choisis.has(f.id)).reduce((a, f) => a + f.montant, 0))}</span></div>
+    <button class="btn btn-primary" id="fc_save" style="margin-top:12px;">Enregistrer</button>
+  `);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+  const recalcTotal = () => {
+    const total = frais
+      .filter((f) => ov.querySelector(`#fc_${f.id}`).checked)
+      .reduce((a, f) => a + f.montant, 0);
+    ov.querySelector("#fc_total").textContent = fmt(total);
+  };
+  ov.querySelectorAll("[data-fc]").forEach((cb) =>
+    cb.addEventListener("change", recalcTotal),
+  );
+  ov.querySelector("#fc_save").addEventListener("click", async () => {
+    const fraisIds = frais
+      .filter((f) => ov.querySelector(`#fc_${f.id}`).checked)
+      .map((f) => f.id);
+    await definirFraisChoisisMembre(idListe, membre.id, fraisIds);
+    closeSheet();
+    toast("Frais mis a jour");
+    refreshListeDetailBody(idListe);
+  });
+}
+
+// openAjouterPaiementActivite : enregistre UN nouveau versement (section 9
+// du cahier des charges). N'ecrase jamais le paiement precedent -- voir
+// ajouterPaiementListeMembre() dans db.js.
+async function openAjouterPaiementActivite(idListe, membre) {
+  if (!membre) return;
+  const info = await infosParticipantActivite(idListe, membre.id);
+  const ov = openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>Paiement -- ${esc(fullName(membre))}</h3>
+    <div class="detail-row"><span class="k">Montant attendu</span><span class="v">${fmt(info.attendu)}</span></div>
+    <div class="detail-row"><span class="k">Deja paye</span><span class="v">${fmt(info.paye)}</span></div>
+    <div class="detail-row"><span class="k">Reste</span><span class="v">${fmt(info.reste)}</span></div>
+    <div class="field" style="margin-top:14px;"><label>Nouveau paiement (FCFA)</label><input id="pa_montant" type="number" min="1" placeholder="${info.reste > 0 ? info.reste : ""}"></div>
+    <div class="field"><label>Commentaire (facultatif)</label><input id="pa_commentaire" type="text" placeholder="Ex. Verse en especes le jour du dimanche"></div>
+    <button class="btn btn-primary" id="pa_save">Enregistrer le paiement</button>
+  `);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+  ov.querySelector("#pa_save").addEventListener("click", async () => {
+    const montant = ov.querySelector("#pa_montant").value;
+    const commentaire = ov.querySelector("#pa_commentaire").value;
+    try {
+      await ajouterPaiementListeMembre(idListe, membre.id, {
+        montant,
+        commentaire,
+      });
+    } catch (err) {
+      toast(err.message, "error");
+      return;
+    }
+    closeSheet();
+    toast("Paiement enregistre");
+    refreshListeDetailBody(idListe);
+  });
+}
+
+// openHistoriquePaiementsActivite : lecture seule (section 6) -- chaque
+// versement recu reste visible individuellement, jamais fusionne.
+async function openHistoriquePaiementsActivite(idListe, membre) {
+  if (!membre) return;
+  const historique = await historiquePaiementsListe(idListe, membre.id);
+  const ov = openSheet(`
+    <button class="sheet-close" data-close>&times;</button>
+    <h3>Historique -- ${esc(fullName(membre))}</h3>
+    <div id="ph_list">
+      ${
+        historique.length
+          ? historique
+              .map(
+                (p) => `
+        <div class="paiement-histo-item">
+          <div><div>${fmt(p.montant)}</div>${p.commentaire ? `<div class="meta">${esc(p.commentaire)}</div>` : ""}</div>
+          <span class="meta montant">${fmtDate(p.date)}${p.heure ? " &middot; " + esc(p.heure) : ""}</span>
+        </div>`,
+              )
+              .join("")
+          : emptyHTML("Aucun paiement enregistre pour l'instant.")
+      }
+    </div>
+  `);
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+}
+
 async function exportListePDF(id) {
   const win = openPrintableWindow();
   const l = await db.listes.get(id);
+  const frais = await listeFraisAll(id);
   const membres = await membresDeListe(id);
   const presenceLabel = {
     present: "Present",
     absent: "Absent",
     attente: "En attente",
   };
+  const infos = {};
+  for (const m of membres) infos[m.id] = await infosParticipantActivite(id, m.id);
+
   const rows = membres
-    .map(
-      (m) =>
-        `<tr><td>${esc(m.nom || "")}</td><td>${esc(m.prenom || "")}</td><td>${esc(m.telephone || "—")}</td><td>${presenceLabel[m.presence]}</td>${l.montant_demande ? `<td>${m.paye ? "Paye" : "Non paye"}</td>` : ""}</tr>`,
-    )
+    .map((m) => {
+      const i = infos[m.id];
+      const dernierPaiement = i.historique[0]; // deja trie du plus recent au plus ancien
+      return `<tr>
+        <td>${esc(m.nom || "")}</td>
+        <td>${esc(m.prenom || "")}</td>
+        <td>${esc(m.telephone || "\u2014")}</td>
+        <td>${presenceLabel[m.presence]}</td>
+        ${frais.length ? `<td>${fmt(i.attendu)}</td><td>${fmt(i.paye)}</td><td>${fmt(i.reste)}</td><td>${STATUT_PAIEMENT_LABEL[i.statut]}</td><td>${dernierPaiement ? fmtDate(dernierPaiement.date) : "\u2014"}</td>` : ""}
+      </tr>`;
+    })
     .join("");
-  const payes = membres.filter((m) => m.paye).length;
+
+  const totalAttendu = Object.values(infos).reduce((a, i) => a + i.attendu, 0);
+  const totalPaye = Object.values(infos).reduce((a, i) => a + i.paye, 0);
+  const colonnesFinancieres = frais.length
+    ? "<th>Attendu</th><th>Paye</th><th>Reste</th><th>Statut</th><th>Dernier paiement</th>"
+    : "";
+
   const body = `
     <h1>${esc(l.nom)}</h1>
-    <div class="meta">${fmtDate(l.date)}${l.description ? " &middot; " + esc(l.description) : ""}</div>
-    <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Presence</th>${l.montant_demande ? "<th>Paiement</th>" : ""}</tr>${rows || `<tr><td colspan="${l.montant_demande ? 5 : 4}">Aucun membre inscrit</td></tr>`}</table>
+    <div class="meta">${fmtDate(l.date)}${l.date_limite ? " &middot; Date limite : " + fmtDate(l.date_limite) : ""}${l.description ? " &middot; " + esc(l.description) : ""}</div>
+    <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Presence</th>${colonnesFinancieres}</tr>${rows || `<tr><td colspan="${frais.length ? 9 : 4}">Aucun participant inscrit</td></tr>`}</table>
+
+    ${
+      frais.length
+        ? `<h2>Frais de l'activite</h2>
+    <table><tr><th>Libelle</th><th>Montant</th></tr>${frais.map((f) => `<tr><td>${esc(f.libelle)}</td><td>${fmt(f.montant)}</td></tr>`).join("")}</table>`
+        : ""
+    }
+
     <h2>Recapitulatif</h2>
     <table>
       <tr><th>Total inscrits</th><td>${membres.length}</td></tr>
       <tr><th>Presents</th><td>${membres.filter((m) => m.presence === "present").length}</td></tr>
       <tr><th>Absents</th><td>${membres.filter((m) => m.presence === "absent").length}</td></tr>
-      ${l.montant_demande ? `<tr><th>Montant demande (par personne)</th><td>${fmt(l.montant_demande)}</td></tr>` : ""}
-      ${l.montant_demande ? `<tr><th>Ont paye</th><td>${payes} / ${membres.length}</td></tr>` : ""}
-      ${l.montant_demande ? `<tr><th>Total attendu</th><td>${fmt(l.montant_demande * membres.length)}</td></tr>` : ""}
-      ${l.montant_demande ? `<tr><th>Total deja recu</th><td>${fmt(l.montant_demande * payes)}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Payes (complets)</th><td>${Object.values(infos).filter((i) => i.statut === "paye").length} / ${membres.length}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Paiements partiels</th><td>${Object.values(infos).filter((i) => i.statut === "partiel").length}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Total attendu</th><td>${fmt(totalAttendu)}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Total deja recu</th><td>${fmt(totalPaye)}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Reste a encaisser</th><td>${fmt(Math.max(0, totalAttendu - totalPaye))}</td></tr>` : ""}
       <tr><th>Date d'impression</th><td>${fmtDate(todayISO())}</td></tr>
     </table>
     ${l.notes ? `<h2>Notes</h2><p>${esc(l.notes)}</p>` : ""}
