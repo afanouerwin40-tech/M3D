@@ -1,6 +1,16 @@
 --- M3D/css/style.css	2026-08-16 12:59:41.856345532 +0000
-+++ M3D_work/css/style.css	2026-08-16 13:25:32.600437963 +0000
-@@ -291,4 +291,57 @@
++++ M3D_work/css/style.css	2026-08-17 06:39:42.329602637 +0000
+@@ -53,7 +53,8 @@
+ 
+ .section-title { display:flex; align-items:center; justify-content:space-between; margin:22px 0 10px; }
+ .section-title h2 { font-size:15px; margin:0; font-weight:700; }
+-.section-title .link { font-size:12.5px; color:var(--accent); font-weight:600; background:none; border:none; cursor:pointer; }
++.link { font-size:12.5px; color:var(--accent); font-weight:600; background:none; border:none; cursor:pointer; padding:0; }
++.link-danger { color:var(--danger); }
+ 
+ .card { background:var(--surface); border-radius:16px; padding:16px; border:1px solid var(--border); box-shadow:var(--shadow); }
+ .list-card { padding:4px 12px; }
+@@ -291,4 +292,53 @@
     visuellement avec le reste de l'interface. */
  @supports not (aspect-ratio: 1) {
    .kpi { min-height:84px; }
@@ -31,33 +41,29 @@
 +.frais-chip:last-child { border-bottom:none; }
 +.frais-chip .name { font-size:14.5px; font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 +.frais-chip .amount { font-size:13.5px; color:var(--text-2); font-weight:600; white-space:nowrap; }
-+.frais-chip-actions { display:flex; gap:6px; flex-shrink:0; }
++.frais-chip-actions { display:flex; gap:12px; flex-shrink:0; }
 +
-+.icon-btn { border:1px solid var(--border); background:var(--surface); color:var(--text-2); border-radius:10px; width:32px; height:32px; display:flex; align-items:center; justify-content:center; cursor:pointer; flex-shrink:0; padding:0; }
-+.icon-btn.danger { color:var(--danger); border-color:var(--bg-danger); }
++.participant-actions { display:flex; flex-wrap:wrap; gap:6px; margin-top:6px; }
 +
-+/* Tableau des participants : sur un ecran etroit un vrai <table> devient
-+   illisible (la mission le demande explicitement), donc chaque
-+   participant est une petite carte empilee -- meme logique responsive que
-+   .chip-row deja utilise ailleurs dans l'app, juste avec plus de contenu
-+   par ligne (montants + actions). */
-+.participant-card { padding:12px 4px; border-bottom:1px solid var(--border); }
-+.participant-card:last-child { border-bottom:none; }
-+.participant-top { display:flex; align-items:center; justify-content:space-between; gap:8px; margin-bottom:5px; }
-+.participant-top .name { font-size:15px; font-weight:600; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-+.participant-amounts { font-size:13px; color:var(--text-3); margin-bottom:9px; }
-+.participant-amounts b { color:var(--text-2); font-weight:600; }
-+.participant-actions { display:flex; flex-wrap:wrap; gap:6px; }
++/* Formulaire des participants : chaque membre de l'association (actif ou
++   inactif) est une ligne a cocher, plutot qu'une recherche membre par
++   membre. Cocher un frais coche implicitement la participation. */
++.participant-form-row { padding:12px 4px; border-bottom:1px solid var(--border); }
++.participant-form-row:last-child { border-bottom:none; }
++.participe-check { display:flex; align-items:center; gap:9px; cursor:pointer; }
++.participe-check input[type="checkbox"] { width:19px; height:19px; flex-shrink:0; }
++.participe-check .name { font-size:15px; font-weight:600; }
++.tag-inactif { font-size:11px; font-weight:600; color:var(--text-3); background:var(--surface-2); border-radius:6px; padding:2px 6px; }
++.frais-inline-row { display:flex; flex-wrap:wrap; gap:10px 16px; margin:8px 0 2px 28px; }
++.frais-inline { display:flex; align-items:center; gap:6px; font-size:13.5px; cursor:pointer; }
++.frais-inline input[type="checkbox"] { width:16px; height:16px; }
++.frais-inline .amount { color:var(--text-3); }
 +
 +.paiement-histo-item { display:flex; justify-content:space-between; align-items:baseline; padding:9px 0; border-bottom:1px solid var(--border); font-size:14px; gap:10px; }
 +.paiement-histo-item:last-child { border-bottom:none; }
 +.paiement-histo-item .montant { font-weight:700; color:var(--success); flex-shrink:0; }
 +.paiement-histo-item .meta { color:var(--text-3); font-size:12.5px; }
 +
-+.frais-check-row { display:flex; align-items:center; gap:10px; padding:9px 4px; border-bottom:1px solid var(--border); }
-+.frais-check-row:last-child { border-bottom:none; }
-+.frais-check-row label { flex:1; font-size:14.5px; cursor:pointer; }
-+.frais-check-row input[type="checkbox"] { width:18px; height:18px; flex-shrink:0; }
 +
 +.cloture-banner { background:var(--bg-warning); color:var(--warning); border-radius:12px; padding:10px 12px; font-size:13.5px; font-weight:600; margin:10px 0; display:flex; align-items:center; justify-content:space-between; gap:8px; }
 \ No newline at end of file

@@ -2001,12 +2001,8 @@ function openCreerListe() {
 }
 
 let listeDetailQuery = "";
-let listeDetailSort = "alpha"; // alpha | presence | paye | reste | statut
-let listeDetailFiltreStatut = "tous"; // tous | non_paye | partiel | paye | surpaye
 async function openListeDetail(id) {
   listeDetailQuery = "";
-  listeDetailSort = "alpha";
-  listeDetailFiltreStatut = "tous";
   await renderListeDetailSheet(id);
 }
 
@@ -2041,7 +2037,6 @@ async function renderListeDetailSheet(id) {
   const html = `
     <button class="sheet-close" data-close>&times;</button>
     <div class="liste-detail-head" style="border-left:4px solid ${safeColor(l.couleur)};padding-left:12px;">
-      <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone, 22)}</span>
       <div><h3 style="margin:0;">${esc(l.nom)}</h3><div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.date_limite ? " &middot; Limite : " + fmtDate(l.date_limite) : ""}${l.archivee ? " &middot; Archivee" : ""}</div></div>
     </div>
     ${!ouverte ? `<div class="cloture-banner"><span>Activite cloturee -- les inscriptions sont fermees mais les paiements deja enregistres restent modifiables.</span></div>` : ""}
@@ -2055,22 +2050,8 @@ async function renderListeDetailSheet(id) {
     ${l.notes ? `<div class="detail-row"><span class="k">Notes</span><span class="v">${esc(l.notes)}</span></div>` : ""}
 
     <div class="section-title" style="margin-top:16px;"><h2>Participants</h2></div>
-    <input class="search" id="ld_search" placeholder="${ouverte ? "Rechercher / ajouter un membre..." : "Rechercher un participant..."}" value="${esc(listeDetailQuery)}">
-    <div class="row" style="border:none;padding:0 4px 6px;justify-content:flex-start;gap:6px;flex-wrap:wrap;">
-      <button class="btn-chip ${listeDetailFiltreStatut === "tous" ? "active" : ""}" data-filtre="tous">Tous</button>
-      <button class="btn-chip ${listeDetailFiltreStatut === "paye" ? "active" : ""}" data-filtre="paye">Paye</button>
-      <button class="btn-chip ${listeDetailFiltreStatut === "partiel" ? "active" : ""}" data-filtre="partiel">Partiel</button>
-      <button class="btn-chip ${listeDetailFiltreStatut === "non_paye" ? "active" : ""}" data-filtre="non_paye">Non paye</button>
-      <button class="btn-chip ${listeDetailFiltreStatut === "surpaye" ? "active" : ""}" data-filtre="surpaye">Surpaye</button>
-    </div>
-    <div class="row" style="border:none;padding:0 4px 10px;justify-content:flex-start;gap:6px;flex-wrap:wrap;">
-      <button class="btn-chip ${listeDetailSort === "alpha" ? "active" : ""}" data-tri="alpha">Nom</button>
-      <button class="btn-chip ${listeDetailSort === "paye" ? "active" : ""}" data-tri="paye">Montant paye</button>
-      <button class="btn-chip ${listeDetailSort === "reste" ? "active" : ""}" data-tri="reste">Reste</button>
-      <button class="btn-chip ${listeDetailSort === "statut" ? "active" : ""}" data-tri="statut">Statut</button>
-      <button class="btn-chip ${listeDetailSort === "presence" ? "active" : ""}" data-tri="presence">Presence</button>
-    </div>
-    <div id="ld_addResults"></div>
+    <div class="small-note" style="margin-bottom:6px;">${frais.length ? "Coche les membres concernes, puis les frais qui s'appliquent a chacun." : "Coche les membres qui participent."}</div>
+    <input class="search" id="ld_search" placeholder="Filtrer la liste des membres..." value="${esc(listeDetailQuery)}">
     <div id="ld_members"></div>
 
     <div class="sheet-actions" style="margin-top:16px;">
@@ -2098,24 +2079,6 @@ async function renderListeDetailSheet(id) {
     listeDetailQuery = e.target.value;
     refreshListeDetailBody(id);
   });
-  ov.querySelectorAll("[data-filtre]").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      listeDetailFiltreStatut = btn.dataset.filtre;
-      ov.querySelectorAll("[data-filtre]").forEach((b) =>
-        b.classList.toggle("active", b === btn),
-      );
-      refreshListeDetailBody(id);
-    }),
-  );
-  ov.querySelectorAll("[data-tri]").forEach((btn) =>
-    btn.addEventListener("click", () => {
-      listeDetailSort = btn.dataset.tri;
-      ov.querySelectorAll("[data-tri]").forEach((b) =>
-        b.classList.toggle("active", b === btn),
-      );
-      refreshListeDetailBody(id);
-    }),
-  );
 
   ov.querySelector("#ld_add_frais").addEventListener("click", () =>
     openFraisForm(id),
@@ -2163,11 +2126,11 @@ async function renderListeDetailSheet(id) {
 }
 
 // refreshListeDetailBody : rafraichit les zones de contenu (#ld_stats,
-// #ld_frais, #ld_addResults, #ld_members) sans jamais toucher au champ de
-// recherche -> le focus clavier et la position du curseur sont preserves
-// pendant la frappe. C'est ici que vivent les calculs d'un seul coup pour
-// tous les participants, en reutilisant infosParticipantActivite() (db.js)
-// comme unique source de verite pour attendu/paye/reste/statut.
+// #ld_frais, #ld_members) sans jamais toucher au champ de recherche -> le
+// focus clavier et la position du curseur sont preserves pendant la
+// frappe. C'est ici que vivent les calculs d'un seul coup pour tous les
+// participants, en reutilisant infosParticipantActivite() (db.js) comme
+// unique source de verite pour attendu/paye/reste/statut.
 async function refreshListeDetailBody(id) {
   const ov = sheetStack[sheetStack.length - 1];
   if (!ov || ov.dataset.listeId !== id) return;
@@ -2175,15 +2138,15 @@ async function refreshListeDetailBody(id) {
   if (!l) return;
   const ouverte = activiteEstOuverte(l);
   const frais = await listeFraisAll(id);
-  const membres = await membresDeListe(id);
+  const inscrits = await membresDeListe(id);
+  const inscritsParId = Object.fromEntries(inscrits.map((m) => [m.id, m]));
   const q = listeDetailQuery.trim().toLowerCase();
 
-  // Un seul aller-retour pour calculer attendu/paye/reste/statut de TOUS
-  // les participants -- evite de refaire ce calcul a plusieurs endroits
-  // (dashboard, tableau, tri, filtre partagent le meme resultat).
+  // Un seul aller-retour pour calculer attendu/paye/reste/statut de tous
+  // les INSCRITS -- un membre non inscrit n'a par definition rien attendu.
   const infosParMembre = {};
   await Promise.all(
-    membres.map(async (m) => {
+    inscrits.map(async (m) => {
       infosParMembre[m.id] = await infosParticipantActivite(id, m.id);
     }),
   );
@@ -2201,7 +2164,7 @@ async function refreshListeDetailBody(id) {
       attendu > 0 ? Math.round((encaisse / attendu) * 1000) / 10 : 0;
     statsBox.innerHTML = `
       <div class="activite-stats-grid">
-        <div class="activite-stat"><div class="lbl">Participants</div><div class="val">${membres.length}</div></div>
+        <div class="activite-stat"><div class="lbl">Participants</div><div class="val">${inscrits.length}</div></div>
         <div class="activite-stat"><div class="lbl">Payes</div><div class="val">${payes}</div></div>
         <div class="activite-stat"><div class="lbl">Partiels</div><div class="val">${partiels}</div></div>
         <div class="activite-stat"><div class="lbl">Non payes</div><div class="val">${nonPayes}</div></div>
@@ -2217,7 +2180,7 @@ async function refreshListeDetailBody(id) {
       </div>`;
   }
 
-  // --- Liste des frais (section 3/14) ---
+  // --- Liste des frais (section 3/14) -- boutons texte, pas d'icones ---
   const fraisBox = ov.querySelector("#ld_frais");
   if (fraisBox) {
     fraisBox.innerHTML = frais
@@ -2227,8 +2190,8 @@ async function refreshListeDetailBody(id) {
         <span class="name">${esc(f.libelle)}</span>
         <span class="amount">${fmt(f.montant)}</span>
         <div class="frais-chip-actions">
-          <button class="icon-btn" data-edit-frais="${f.id}" aria-label="Modifier">&#9998;</button>
-          <button class="icon-btn danger" data-del-frais="${f.id}" aria-label="Supprimer">&times;</button>
+          <button class="link" data-edit-frais="${f.id}">Modifier</button>
+          <button class="link link-danger" data-del-frais="${f.id}">Supprimer</button>
         </div>
       </div>`,
       )
@@ -2250,151 +2213,103 @@ async function refreshListeDetailBody(id) {
     );
   }
 
-  // --- Ajout d'un participant (recherche parmi les membres non inscrits) ---
-  const addResultsBox = ov.querySelector("#ld_addResults");
-  if (q && ouverte) {
-    const inscritsIds = new Set(membres.map((m) => m.id));
-    const tousMembres = await listMembres();
-    const candidats = tousMembres
-      .filter(
-        (m) => !inscritsIds.has(m.id) && fullName(m).toLowerCase().includes(q),
-      )
-      .slice(0, 6);
-    addResultsBox.innerHTML = candidats.length
-      ? `<div class="small-note" style="margin:4px 0;">Ajouter a l'activite :</div>` +
-        candidats
-          .map(
-            (m) => `
-        <div class="row" data-add="${m.id}" style="cursor:pointer;">
-          <div class="avatar">${initials(m)}</div>
-          <div class="info"><div class="name">${esc(fullName(m))}</div></div>
-          <span class="badge badge-yes">+ Ajouter</span>
-        </div>`,
-          )
-          .join("")
-      : "";
-    addResultsBox.querySelectorAll("[data-add]").forEach((el) =>
-      el.addEventListener("click", async () => {
-        await ajouterMembreListe(id, el.dataset.add);
-        listeDetailQuery = "";
-        const searchInput = ov.querySelector("#ld_search");
-        if (searchInput) searchInput.value = "";
-        toast("Participant ajoute");
-        refreshListeDetailBody(id);
-        renderListesList();
-      }),
-    );
-  } else if (q && !ouverte) {
-    // Section 12 : activite cloturee -> inscription desactivee. On garde
-    // la recherche utilisable pour FILTRER les participants deja inscrits
-    // (juste en dessous), mais plus pour en ajouter de nouveaux.
-    addResultsBox.innerHTML = `<div class="small-note" style="margin:4px 0;">Activite cloturee : inscription desactivee.</div>`;
-  } else {
-    addResultsBox.innerHTML = "";
-  }
-
-  // --- Filtre + tri des participants deja inscrits ---
-  let shown = membres.filter((m) => fullName(m).toLowerCase().includes(q));
-  if (listeDetailFiltreStatut !== "tous") {
-    shown = shown.filter(
-      (m) => infosParMembre[m.id].statut === listeDetailFiltreStatut,
-    );
-  }
-  const ordrePresence = { present: 0, attente: 1, absent: 2 };
-  if (listeDetailSort === "alpha")
-    shown.sort((a, b) => fullName(a).localeCompare(fullName(b)));
-  else if (listeDetailSort === "presence")
-    shown.sort(
-      (a, b) => ordrePresence[a.presence] - ordrePresence[b.presence],
-    );
-  else if (listeDetailSort === "paye")
-    shown.sort((a, b) => infosParMembre[b.id].paye - infosParMembre[a.id].paye);
-  else if (listeDetailSort === "reste")
-    shown.sort(
-      (a, b) => infosParMembre[b.id].reste - infosParMembre[a.id].reste,
-    );
-  else if (listeDetailSort === "statut") {
-    const ordreStatut = { non_paye: 0, partiel: 1, surpaye: 2, paye: 3 };
-    shown.sort(
-      (a, b) =>
-        ordreStatut[infosParMembre[a.id].statut] -
-        ordreStatut[infosParMembre[b.id].statut],
-    );
-  }
+  // --- Participants : formulaire avec TOUS les membres de l'association
+  // (actifs comme inactifs), plutot qu'une recherche membre par membre.
+  // Cocher "Participe" inscrit/desinscrit ; cocher un frais implique
+  // automatiquement la participation. Les montants attendus sont
+  // remplaces par les libelles exacts des frais coches (section demandee
+  // par l'utilisateur : plus de chiffre agrege, les postes exacts).
+  const tousMembres = await listMembres();
+  const filtres = tousMembres.filter((m) =>
+    fullName(m).toLowerCase().includes(q),
+  );
+  filtres.sort((a, b) => {
+    if (a.statut !== b.statut) return a.statut === "Actif" ? -1 : 1;
+    return fullName(a).localeCompare(fullName(b));
+  });
 
   const membersBox = ov.querySelector("#ld_members");
-  membersBox.innerHTML = shown.length
-    ? shown
+  membersBox.innerHTML = filtres.length
+    ? filtres
         .map((m) => {
-          const info = infosParMembre[m.id];
+          const estInscrit = !!inscritsParId[m.id];
+          const inscription = inscritsParId[m.id];
+          const info = estInscrit ? infosParMembre[m.id] : null;
+          const fraisChoisis = new Set(
+            (inscription && inscription.frais_choisis) || [],
+          );
+          const peutCocher = ouverte || estInscrit;
           return `
-    <div class="participant-card" data-membre="${m.id}">
-      <div class="participant-top">
+    <div class="participant-form-row" data-membre="${m.id}">
+      <label class="participe-check">
+        <input type="checkbox" data-participe="${m.id}" ${estInscrit ? "checked" : ""} ${peutCocher ? "" : "disabled"}>
         <span class="name">${esc(fullName(m))}</span>
-        <span class="badge ${STATUT_PAIEMENT_BADGE[info.statut]}">${STATUT_PAIEMENT_LABEL[info.statut]}</span>
-      </div>
-      ${frais.length ? `<div class="participant-amounts">Attendu : <b>${fmt(info.attendu)}</b> &middot; Paye : <b>${fmt(info.paye)}</b> &middot; Reste : <b>${fmt(info.reste)}</b></div>` : ""}
-      <div class="participant-actions">
-        <button class="toggle ${m.presence === "present" ? "on" : m.presence === "absent" ? "off" : "wait"}" data-presence="${m.id}">${m.presence === "present" ? "Present" : m.presence === "absent" ? "Absent" : "En attente"}</button>
-        ${frais.length ? `<button class="btn-chip" data-choix-frais="${m.id}">Frais (${(m.frais_choisis || []).length}/${frais.length})</button>` : ""}
-        ${frais.length ? `<button class="btn-chip" data-payer="${m.id}">Enregistrer un paiement</button>` : ""}
-        ${info.historique.length ? `<button class="btn-chip" data-historique="${m.id}">Historique (${info.historique.length})</button>` : ""}
-        <button class="chip-remove" data-remove="${m.id}" aria-label="Retirer">&times;</button>
-      </div>
+        ${m.statut === "Inactif" ? `<span class="tag-inactif">Inactif</span>` : ""}
+      </label>
+      ${
+        frais.length
+          ? `<div class="frais-inline-row">${frais
+              .map(
+                (f) => `
+        <label class="frais-inline">
+          <input type="checkbox" data-frais="${m.id}|${f.id}" ${fraisChoisis.has(f.id) ? "checked" : ""} ${peutCocher ? "" : "disabled"}>
+          ${esc(f.libelle)} <span class="amount">(${fmt(f.montant)})</span>
+        </label>`,
+              )
+              .join("")}</div>`
+          : ""
+      }
+      ${
+        estInscrit && frais.length
+          ? `<div class="small-note">Paye : <b>${fmt(info.paye)}</b> &middot; Reste : <b>${fmt(info.reste)}</b></div>
+             <div class="participant-actions">
+               <button class="btn-chip" data-payer="${m.id}">Enregistrer un paiement</button>
+               ${info.historique.length ? `<button class="btn-chip" data-historique="${m.id}">Historique (${info.historique.length})</button>` : ""}
+             </div>`
+          : ""
+      }
     </div>`;
         })
         .join("")
-    : emptyHTML(
-        q || listeDetailFiltreStatut !== "tous"
-          ? "Aucun participant ne correspond a cette recherche/ce filtre."
-          : "Aucun participant inscrit. Utilise la recherche ci-dessus pour en ajouter.",
-      );
+    : emptyHTML("Aucun membre ne correspond a cette recherche.");
 
-  membersBox.querySelectorAll("[data-presence]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      const mid = btn.dataset.presence;
-      const cur = membres.find((m) => m.id === mid).presence;
-      const next =
-        cur === "attente"
-          ? "present"
-          : cur === "present"
-            ? "absent"
-            : "attente";
-      await definirPresenceListe(id, mid, next);
+  membersBox.querySelectorAll("[data-participe]").forEach((cb) =>
+    cb.addEventListener("change", async () => {
+      const mid = cb.dataset.participe;
+      if (cb.checked) await ajouterMembreListe(id, mid);
+      else await retirerMembreListe(id, mid);
+      refreshListeDetailBody(id);
+      renderListesList();
+    }),
+  );
+  membersBox.querySelectorAll("[data-frais]").forEach((cb) =>
+    cb.addEventListener("change", async () => {
+      const [mid, fid] = cb.dataset.frais.split("|");
+      // Cocher un frais implique la participation, meme si la case
+      // "Participe" n'a pas ete cochee explicitement en premier.
+      if (!inscritsParId[mid]) await ajouterMembreListe(id, mid);
+      const inscription = inscritsParId[mid];
+      const actuels = new Set(
+        (inscription && inscription.frais_choisis) || [],
+      );
+      if (cb.checked) actuels.add(fid);
+      else actuels.delete(fid);
+      await definirFraisChoisisMembre(id, mid, [...actuels]);
       refreshListeDetailBody(id);
     }),
   );
-  membersBox.querySelectorAll("[data-choix-frais]").forEach((btn) =>
-    btn.addEventListener("click", () =>
-      openChoisirFraisMembre(
-        id,
-        membres.find((m) => m.id === btn.dataset.choixFrais),
-      ),
-    ),
-  );
   membersBox.querySelectorAll("[data-payer]").forEach((btn) =>
     btn.addEventListener("click", () =>
-      openAjouterPaiementActivite(
-        id,
-        membres.find((m) => m.id === btn.dataset.payer),
-      ),
+      openAjouterPaiementActivite(id, inscritsParId[btn.dataset.payer]),
     ),
   );
   membersBox.querySelectorAll("[data-historique]").forEach((btn) =>
     btn.addEventListener("click", () =>
       openHistoriquePaiementsActivite(
         id,
-        membres.find((m) => m.id === btn.dataset.historique),
+        inscritsParId[btn.dataset.historique],
       ),
     ),
-  );
-  membersBox.querySelectorAll("[data-remove]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      await retirerMembreListe(id, btn.dataset.remove);
-      toast("Participant retire de l'activite");
-      refreshListeDetailBody(id);
-      renderListesList();
-    }),
   );
 }
 
@@ -2428,53 +2343,6 @@ function openFraisForm(idListe, fraisExistant) {
     closeSheet();
     toast(fraisExistant ? "Frais modifie" : "Frais ajoute");
     renderListeDetailSheet(idListe);
-  });
-}
-
-// openChoisirFraisMembre : quels postes financiers concernent ce
-// participant (section 3 du cahier des charges -- un membre peut ne
-// choisir qu'une partie des frais proposes).
-async function openChoisirFraisMembre(idListe, membre) {
-  if (!membre) return;
-  const frais = await listeFraisAll(idListe);
-  const choisis = new Set(membre.frais_choisis || []);
-  const ov = openSheet(`
-    <button class="sheet-close" data-close>&times;</button>
-    <h3>Frais de ${esc(fullName(membre))}</h3>
-    <div class="small-note" style="margin-bottom:8px;">Coche uniquement ce qui concerne ce participant : le montant attendu se recalcule automatiquement.</div>
-    <div id="fc_list">
-      ${frais
-        .map(
-          (f) => `
-      <div class="frais-check-row">
-        <input type="checkbox" id="fc_${f.id}" data-fc="${f.id}" ${choisis.has(f.id) ? "checked" : ""}>
-        <label for="fc_${f.id}">${esc(f.libelle)}</label>
-        <span class="amount">${fmt(f.montant)}</span>
-      </div>`,
-        )
-        .join("")}
-    </div>
-    <div class="detail-row" style="margin-top:6px;"><span class="k">Total selectionne</span><span class="v" id="fc_total">${fmt(frais.filter((f) => choisis.has(f.id)).reduce((a, f) => a + f.montant, 0))}</span></div>
-    <button class="btn btn-primary" id="fc_save" style="margin-top:12px;">Enregistrer</button>
-  `);
-  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
-  const recalcTotal = () => {
-    const total = frais
-      .filter((f) => ov.querySelector(`#fc_${f.id}`).checked)
-      .reduce((a, f) => a + f.montant, 0);
-    ov.querySelector("#fc_total").textContent = fmt(total);
-  };
-  ov.querySelectorAll("[data-fc]").forEach((cb) =>
-    cb.addEventListener("change", recalcTotal),
-  );
-  ov.querySelector("#fc_save").addEventListener("click", async () => {
-    const fraisIds = frais
-      .filter((f) => ov.querySelector(`#fc_${f.id}`).checked)
-      .map((f) => f.id);
-    await definirFraisChoisisMembre(idListe, membre.id, fraisIds);
-    closeSheet();
-    toast("Frais mis a jour");
-    refreshListeDetailBody(idListe);
   });
 }
 
