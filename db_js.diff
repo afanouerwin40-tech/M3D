@@ -1,5 +1,5 @@
 --- M3D/js/db.js	2026-08-16 12:59:41.859511422 +0000
-+++ M3D_work/js/db.js	2026-08-16 18:02:59.205108138 +0000
++++ M3D_work/js/db.js	2026-08-17 06:04:24.011955334 +0000
 @@ -143,6 +143,95 @@
    prets_membres:
      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
@@ -164,7 +164,7 @@
            }
          : null,
      )
-@@ -1177,6 +1297,235 @@
+@@ -1177,6 +1297,238 @@
  }
  
  // ---------------------------------------------------------------
@@ -198,7 +198,10 @@
 +    id_liste: idListe,
 +    libelle: libelle.trim(),
 +    montant: m,
-+    ordre: ordre ?? nbExistants,
++    // "??" n'est pas supporte avant Safari 13.1 (absent sur iOS 12) et
++    // casse le PARSING de tout le fichier, pas seulement cette fonction --
++    // meme piege que documente plus haut dans ce fichier (voir dettesList).
++    ordre: ordre !== undefined ? ordre : nbExistants,
 +  });
 +  await log("liste_frais", "cree", `${idListe}:${id}`);
 +  return id;

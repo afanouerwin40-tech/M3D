@@ -1327,7 +1327,10 @@ async function ajouterFraisListe(idListe, { libelle, montant, ordre } = {}) {
     id_liste: idListe,
     libelle: libelle.trim(),
     montant: m,
-    ordre: ordre ?? nbExistants,
+    // "??" n'est pas supporte avant Safari 13.1 (absent sur iOS 12) et
+    // casse le PARSING de tout le fichier, pas seulement cette fonction --
+    // meme piege que documente plus haut dans ce fichier (voir dettesList).
+    ordre: ordre !== undefined ? ordre : nbExistants,
   });
   await log("liste_frais", "cree", `${idListe}:${id}`);
   return id;
