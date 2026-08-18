@@ -1911,14 +1911,13 @@ async function renderListesList() {
   const cardsHtml = await Promise.all(
     filtered.map(async (l) => {
       const membres = await membresDeListe(l.id);
-      const presents = membres.filter((m) => m.presence === "present").length;
       const frais = await listeFraisAll(l.id);
       const stats = frais.length ? await statistiquesActivite(l.id) : null;
       const fermee = !activiteEstOuverte(l);
       return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${safeColor(l.couleur)};">
       <div class="liste-card-top">
         <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
-        <div class="info"><div class="name">${esc(l.nom)}${fermee ? ` <span class="badge badge-no" style="margin-left:4px;">Cloturee</span>` : ""}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}${membres.length ? ` &middot; ${presents} present${presents > 1 ? "s" : ""}` : ""}${stats ? ` &middot; ${stats.payes} paye${stats.payes > 1 ? "s" : ""}/${membres.length}` : ""}</div></div>
+        <div class="info"><div class="name">${esc(l.nom)}${fermee ? ` <span class="badge badge-no" style="margin-left:4px;">Cloturee</span>` : ""}</div><div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}${stats ? ` &middot; ${stats.payes} paye${stats.payes > 1 ? "s" : ""}/${membres.length}` : ""}</div></div>
       </div>
       ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
     </div>`;
@@ -2151,30 +2150,22 @@ async function refreshListeDetailBody(id) {
     }),
   );
 
-  // --- Dashboard (section 11 du cahier des charges) ---
+  // --- Dashboard (juste l'essentiel, pas de vocabulaire "caisse") ---
   const statsBox = ov.querySelector("#ld_stats");
   if (statsBox) {
     const valeurs = Object.values(infosParMembre);
     const payes = valeurs.filter((i) => i.statut === "paye").length;
     const partiels = valeurs.filter((i) => i.statut === "partiel").length;
-    const nonPayes = valeurs.filter((i) => i.statut === "non_paye").length;
-    const attendu = valeurs.reduce((a, i) => a + i.attendu, 0);
-    const encaisse = valeurs.reduce((a, i) => a + i.paye, 0);
-    const taux =
-      attendu > 0 ? Math.round((encaisse / attendu) * 1000) / 10 : 0;
+    const totalRecu = valeurs.reduce((a, i) => a + i.paye, 0);
     statsBox.innerHTML = `
       <div class="activite-stats-grid">
-        <div class="activite-stat"><div class="lbl">Participants</div><div class="val">${inscrits.length}</div></div>
-        <div class="activite-stat"><div class="lbl">Payes</div><div class="val">${payes}</div></div>
-        <div class="activite-stat"><div class="lbl">Partiels</div><div class="val">${partiels}</div></div>
-        <div class="activite-stat"><div class="lbl">Non payes</div><div class="val">${nonPayes}</div></div>
+        <div class="activite-stat"><div class="lbl">Total inscrits</div><div class="val">${inscrits.length}</div></div>
         ${
           frais.length
             ? `
-        <div class="activite-stat"><div class="lbl">Attendu</div><div class="val">${fmt(attendu)}</div></div>
-        <div class="activite-stat"><div class="lbl">Encaisse</div><div class="val">${fmt(encaisse)}</div></div>
-        <div class="activite-stat"><div class="lbl">Reste</div><div class="val">${fmt(Math.max(0, attendu - encaisse))}</div></div>
-        <div class="activite-stat"><div class="lbl">Taux</div><div class="val">${taux}%</div></div>`
+        <div class="activite-stat"><div class="lbl">Payes</div><div class="val">${payes}</div></div>
+        <div class="activite-stat"><div class="lbl">Partiels</div><div class="val">${partiels}</div></div>
+        <div class="activite-stat"><div class="lbl">Total recu</div><div class="val">${fmt(totalRecu)}</div></div>`
             : ""
         }
       </div>`;
@@ -2412,12 +2403,8 @@ async function exportListePDF(id) {
   const win = openPrintableWindow();
   const l = await db.listes.get(id);
   const frais = await listeFraisAll(id);
+  const fraisParId = Object.fromEntries(frais.map((f) => [f.id, f]));
   const membres = await membresDeListe(id);
-  const presenceLabel = {
-    present: "Present",
-    absent: "Absent",
-    attente: "En attente",
-  };
   const infos = {};
   for (const m of membres) infos[m.id] = await infosParticipantActivite(id, m.id);
 
@@ -2425,26 +2412,30 @@ async function exportListePDF(id) {
     .map((m) => {
       const i = infos[m.id];
       const dernierPaiement = i.historique[0]; // deja trie du plus recent au plus ancien
+      const fraisNoms = (m.frais_choisis || [])
+        .map((fid) => (fraisParId[fid] ? fraisParId[fid].libelle : null))
+        .filter(Boolean)
+        .join(", ");
       return `<tr>
         <td>${esc(m.nom || "")}</td>
         <td>${esc(m.prenom || "")}</td>
         <td>${esc(m.telephone || "\u2014")}</td>
-        <td>${presenceLabel[m.presence]}</td>
-        ${frais.length ? `<td>${fmt(i.attendu)}</td><td>${fmt(i.paye)}</td><td>${fmt(i.reste)}</td><td>${STATUT_PAIEMENT_LABEL[i.statut]}</td><td>${dernierPaiement ? fmtDate(dernierPaiement.date) : "\u2014"}</td>` : ""}
+        ${frais.length ? `<td>${esc(fraisNoms || "\u2014")}</td><td>${fmt(i.paye)}</td><td>${fmt(i.reste)}</td><td>${STATUT_PAIEMENT_LABEL[i.statut]}</td><td>${dernierPaiement ? fmtDate(dernierPaiement.date) : "\u2014"}</td>` : ""}
       </tr>`;
     })
     .join("");
 
-  const totalAttendu = Object.values(infos).reduce((a, i) => a + i.attendu, 0);
-  const totalPaye = Object.values(infos).reduce((a, i) => a + i.paye, 0);
+  const totalRecu = Object.values(infos).reduce((a, i) => a + i.paye, 0);
+  const payesComplets = Object.values(infos).filter((i) => i.statut === "paye").length;
+  const partiels = Object.values(infos).filter((i) => i.statut === "partiel").length;
   const colonnesFinancieres = frais.length
-    ? "<th>Attendu</th><th>Paye</th><th>Reste</th><th>Statut</th><th>Dernier paiement</th>"
+    ? "<th>Frais</th><th>Paye</th><th>Reste</th><th>Statut</th><th>Dernier paiement</th>"
     : "";
 
   const body = `
     <h1>${esc(l.nom)}</h1>
     <div class="meta">${fmtDate(l.date)}${l.date_limite ? " &middot; Date limite : " + fmtDate(l.date_limite) : ""}${l.description ? " &middot; " + esc(l.description) : ""}</div>
-    <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th><th>Presence</th>${colonnesFinancieres}</tr>${rows || `<tr><td colspan="${frais.length ? 9 : 4}">Aucun participant inscrit</td></tr>`}</table>
+    <table><tr><th>Nom</th><th>Prenom</th><th>Telephone</th>${colonnesFinancieres}</tr>${rows || `<tr><td colspan="${frais.length ? 8 : 3}">Aucun participant inscrit</td></tr>`}</table>
 
     ${
       frais.length
@@ -2456,13 +2447,9 @@ async function exportListePDF(id) {
     <h2>Recapitulatif</h2>
     <table>
       <tr><th>Total inscrits</th><td>${membres.length}</td></tr>
-      <tr><th>Presents</th><td>${membres.filter((m) => m.presence === "present").length}</td></tr>
-      <tr><th>Absents</th><td>${membres.filter((m) => m.presence === "absent").length}</td></tr>
-      ${frais.length ? `<tr><th>Payes (complets)</th><td>${Object.values(infos).filter((i) => i.statut === "paye").length} / ${membres.length}</td></tr>` : ""}
-      ${frais.length ? `<tr><th>Paiements partiels</th><td>${Object.values(infos).filter((i) => i.statut === "partiel").length}</td></tr>` : ""}
-      ${frais.length ? `<tr><th>Total attendu</th><td>${fmt(totalAttendu)}</td></tr>` : ""}
-      ${frais.length ? `<tr><th>Total deja recu</th><td>${fmt(totalPaye)}</td></tr>` : ""}
-      ${frais.length ? `<tr><th>Reste a encaisser</th><td>${fmt(Math.max(0, totalAttendu - totalPaye))}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Payes</th><td>${payesComplets}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Paiements partiels</th><td>${partiels}</td></tr>` : ""}
+      ${frais.length ? `<tr><th>Total recu</th><td>${fmt(totalRecu)}</td></tr>` : ""}
       <tr><th>Date d'impression</th><td>${fmtDate(todayISO())}</td></tr>
     </table>
     ${l.notes ? `<h2>Notes</h2><p>${esc(l.notes)}</p>` : ""}
