@@ -1125,9 +1125,10 @@ async function supprimerDimanche(idDimanche) {
 }
 
 // ---------------------------------------------------------------
-// MODULE "MES LISTES" — independant des cotisations d'anniversaire.
-// Une liste = un evenement/groupe (sortie, reunion, camp...) avec ses
-// propres membres inscrits, chacun marque present/absent/en attente.
+// MODULE "ACTIVITES" — independant des cotisations d'anniversaire.
+// Une activite = un evenement/groupe (sortie, reunion, camp...) avec ses
+// propres participants inscrits et, le cas echeant, des frais a suivre
+// (voir plus bas : liste_frais / liste_paiements).
 // ---------------------------------------------------------------
 async function listesAll({ archiveesSeulement = null } = {}) {
   let all = await db.listes.toArray();
@@ -1213,7 +1214,6 @@ async function dupliquerListe(id) {
       id: uid(),
       id_liste: newId,
       id_membre: lm.id_membre,
-      presence: "attente",
       // Le choix des frais est reporte (adapte aux nouveaux id de frais),
       // mais chacun repart avec paye = 0 puisqu'aucun paiement n'est copie.
       frais_choisis: (lm.frais_choisis || [])
@@ -1224,8 +1224,8 @@ async function dupliquerListe(id) {
   await log("liste", "dupliquee", newId);
   return newId;
 }
-// membresDeListe : renvoie les fiches membres inscrits a une liste, avec leur
-// statut de presence ("present" | "absent" | "attente") fusionne dans l'objet.
+// membresDeListe : renvoie les fiches membres inscrits a une liste, avec
+// leurs frais choisis fusionnes dans l'objet.
 async function membresDeListe(idListe) {
   const inscriptions = await db.liste_membres
     .where("id_liste")
@@ -1239,8 +1239,6 @@ async function membresDeListe(idListe) {
         ? {
             ...memById[ins.id_membre],
             _inscriptionId: ins.id,
-            presence: ins.presence || "attente",
-            paye: !!ins.paye,
             // frais_choisis (v6) : quels postes financiers concernent ce
             // membre pour cette activite -- voir calculerMontantAttendu.
             frais_choisis: ins.frais_choisis || [],
@@ -1261,8 +1259,6 @@ async function ajouterMembreListe(idListe, idMembre) {
     id: uid(),
     id_liste: idListe,
     id_membre: idMembre,
-    presence: "attente",
-    paye: false,
   });
   await log("liste", "membre_ajoute", `${idListe}:${idMembre}`);
 }
@@ -1273,27 +1269,6 @@ async function retirerMembreListe(idListe, idMembre) {
     .and((x) => x.id_membre === idMembre)
     .delete();
   await log("liste", "membre_retire", `${idListe}:${idMembre}`);
-}
-async function definirPresenceListe(idListe, idMembre, presence) {
-  const row = await db.liste_membres
-    .where("id_liste")
-    .equals(idListe)
-    .and((x) => x.id_membre === idMembre)
-    .first();
-  if (!row) return;
-  await db.liste_membres.update(row.id, { presence });
-}
-// definirPaiementListe : suivi du paiement de la participation demandee
-// (liste.montant_demande), independant de la presence. Utile pour une
-// sortie/un camp payant ou l'on veut savoir qui a regle sa part.
-async function definirPaiementListe(idListe, idMembre, paye) {
-  const row = await db.liste_membres
-    .where("id_liste")
-    .equals(idListe)
-    .and((x) => x.id_membre === idMembre)
-    .first();
-  if (!row) return;
-  await db.liste_membres.update(row.id, { paye });
 }
 
 // ---------------------------------------------------------------
@@ -1555,48 +1530,6 @@ async function rapportStats() {
     nb: membres.filter((m) => m.mois_anniversaire === i + 1).length,
   }));
 
-  // Regularite : sur l'ensemble des dimanches, combien de fois chaque membre a paye / n'a pas paye.
-  const compteur = {};
-  membres.forEach((m) => {
-    compteur[m.id] = { membre: m, paye: 0, total: 0 };
-  });
-  for (const j of joursStats) {
-    for (const p of j.paiements) {
-      if (!compteur[p.id_membre]) continue;
-      compteur[p.id_membre].total++;
-      if (p.a_paye) compteur[p.id_membre].paye++;
-    }
-  }
-  const regularite = Object.values(compteur)
-    .filter((c) => c.total > 0)
-    .map((c) => ({
-      membre: c.membre,
-      taux: c.paye / c.total,
-      paye: c.paye,
-      total: c.total,
-    }));
-  // AVANT : plusReguliers et absents venaient du MEME classement (le meme
-  // tableau "regularite"), juste trie dans un sens puis dans l'autre, avec
-  // un simple "top 10" de chaque cote. Probleme : avec peu de membres ayant
-  // assez d'historique, un membre plutot regulier (ex. 65% de presence)
-  // pouvait finir dans le "top 10 des plus absents" simplement parce qu'il
-  // etait en bas du classement -- alors qu'il n'est pas vraiment absent.
-  // MAINTENANT : deux seuils clairs et INDEPENDANTS. Un membre n'apparait
-  // dans "les plus reguliers" que s'il a un taux de presence >= 80%, et
-  // dans "les plus absents" que s'il a un taux <= 40%. Un membre "moyen"
-  // (entre les deux) n'apparait dans aucune des deux listes -- c'est
-  // volontaire : il n'est ni notablement regulier, ni notablement absent.
-  const SEUIL_REGULIER = 0.8;
-  const SEUIL_ABSENT = 0.4;
-  // Liste COMPLETE (pas de slice(0, 10)) : le rapport doit montrer tous
-  // les membres concernes, pas seulement les 10 premiers.
-  const plusReguliers = regularite
-    .filter((r) => r.total >= 2 && r.taux >= SEUIL_REGULIER)
-    .sort((a, b) => b.taux - a.taux || b.total - a.total);
-  const absents = regularite
-    .filter((r) => r.total >= 2 && r.taux <= SEUIL_ABSENT)
-    .sort((a, b) => a.taux - b.taux || b.total - a.total);
-
   const tauxParticipationGlobal = joursStats.length
     ? joursStats.reduce(
         (a, j) => a + (j.nbTotal ? j.nbPayants / j.nbTotal : 0),
@@ -1615,8 +1548,6 @@ async function rapportStats() {
     solde,
     dettesTotal,
     tauxParticipationGlobal,
-    plusReguliers,
-    absents,
     joursStats,
     nbListes: listes.filter((l) => !l.archivee).length,
     nbListesArchivees: listes.filter((l) => l.archivee).length,

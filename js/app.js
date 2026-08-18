@@ -2970,22 +2970,6 @@ async function exportRapportPDF() {
   const moisRows = r.parMois
     .map((x) => `<tr><td>${x.mois}</td><td>${x.nb}</td></tr>`)
     .join("");
-  const regRows =
-    r.plusReguliers
-      .map(
-        (x) =>
-          `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux * 100)}%</td></tr>`,
-      )
-      .join("") ||
-    `<tr><td colspan="3">Aucun membre a 80% de presence ou plus</td></tr>`;
-  const absRows =
-    r.absents
-      .map(
-        (x) =>
-          `<tr><td>${esc(fullName(x.membre))}</td><td>${x.paye}/${x.total}</td><td>${Math.round(x.taux * 100)}%</td></tr>`,
-      )
-      .join("") ||
-    `<tr><td colspan="3">Aucun membre a 40% de presence ou moins</td></tr>`;
   const histRows = r.joursStats
     .map(
       (j) =>
@@ -3010,10 +2994,6 @@ async function exportRapportPDF() {
     <table><tr><th>Fonction</th><th>Membres</th></tr>${fonctionsRows}</table>
     <h2>Anniversaires par mois</h2>
     <table><tr><th>Mois</th><th>Membres</th></tr>${moisRows}</table>
-    <h2>Membres les plus reguliers (80%+ de presence)</h2>
-    <table><tr><th>Membre</th><th>Cotisations payees</th><th>Taux</th></tr>${regRows}</table>
-    <h2>Membres les plus absents (40% ou moins de presence)</h2>
-    <table><tr><th>Membre</th><th>Cotisations payees</th><th>Taux</th></tr>${absRows}</table>
     <h2>Historique des cotisations (${r.joursStats.length})</h2>
     <table><tr><th>Date</th><th>Anniversaire(s)</th><th>Total collecte</th><th>Ont cotise</th></tr>${histRows}</table>
   `;
