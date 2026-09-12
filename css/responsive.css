@@ -1,0 +1,224 @@
+/* ===================================================================
+   RESPONSIVE.CSS — Adaptations grand écran, impression et replis
+   =================================================================== */
+
+/* ===================================================================
+   DISPOSITION DESKTOP & TABLETTE (min-width: 900px)
+   Transforme la barre inférieure en barre latérale sticky à gauche
+   et affiche le contenu principal sous forme de tableau de bord étendu.
+   =================================================================== */
+
+@media (min-width: 900px) {
+  body {
+    display: flex;
+    justify-content: center;
+  }
+
+  #app {
+    width: 100%;
+    max-width: 1180px;
+    display: grid;
+    grid-template-columns: 220px 1fr;
+    align-items: start;
+    padding-bottom: 0;
+    min-height: 100vh;
+  }
+
+  .topbar {
+    grid-column: 1 / -1;
+    max-width: none;
+  }
+
+  /* Sidebar latérale gauche */
+  .tabbar {
+    grid-column: 1;
+    grid-row: 2;
+    position: sticky;
+    top: 73px;
+    left: auto;
+    right: auto;
+    bottom: auto;
+    max-width: none;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: flex-start;
+    gap: 2px;
+    padding: 20px 14px;
+    border-top: none;
+    border-right: 1px solid var(--border);
+    background: transparent;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+    height: calc(100vh - 73px);
+  }
+
+  #app-content {
+    grid-column: 2;
+    grid-row: 2;
+    padding: 24px 32px 60px;
+    max-width: 900px;
+  }
+
+  .tab {
+    flex-direction: row;
+    justify-content: flex-start;
+    gap: 12px;
+    padding: 11px 14px;
+    border-radius: 12px;
+    font-size: 14.5px;
+  }
+
+  .tab.active {
+    background: var(--accent-light);
+  }
+
+  .tab-bump {
+    width: auto;
+    height: auto;
+  }
+
+  .tab svg {
+    width: 20px;
+    height: 20px;
+  }
+
+  .tab.active .tab-bump {
+    transform: none;
+    background: transparent;
+    box-shadow: none;
+  }
+
+  .tab.active .tab-bump svg {
+    stroke: var(--accent);
+  }
+
+  .tab.active .tab-label {
+    opacity: 1;
+    transform: none;
+  }
+
+  .charts-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .charts-grid .chart-card:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .kpi-grid {
+    grid-template-columns: repeat(5, 1fr);
+  }
+
+  .fab-zone {
+    max-width: 1180px;
+  }
+}
+
+/* ===================================================================
+   IMPRESSION (Toujours en thème clair optimisé pour papier)
+   =================================================================== */
+
+@media print {
+  /* Palette d'impression alignée sur le thème clair actuel (terracotta).
+     Avant Phase A, ce bloc figeait encore l'ancienne identité Indigo
+     (--accent: #6366F1) : tout document exporté/imprimé ne correspondait
+     donc plus du tout à l'app à l'écran — voir docs/UI-UX-AUDIT.md
+     section 0. Les anciens ET nouveaux noms de tokens sont fixés en dur
+     ici (plutôt qu'avec var()) pour garantir le rendu quel que soit le
+     thème actif (clair/sombre) au moment de l'impression. */
+  [data-theme] {
+    --bg:               #FFFFFF;
+    --surface:          #FFFFFF;
+    --surface-elevated: #FFFFFF;
+    --surface-muted:    #F3F1EE;
+    --text:             #1C1917;
+    --text-secondary:   #44403C;
+    --text-muted:       #78716C;
+    --border:           #D6D2CB;
+    --accent:           #C4714A;
+    --accent-hover:     #A85C38;
+    --accent-subtle:    #FAF0EB;
+    --success:          #16A34A;
+    --success-subtle:   #F0FDF4;
+    --danger:           #DC2626;
+    --danger-subtle:    #FEF2F2;
+    --warning:          #B45309;
+    --warning-subtle:   #FFFBEB;
+    --info:             #3B6FD4;
+    --info-subtle:      #EAF1FD;
+    --purple:           #5B4FD9;
+    --bg-purple:        #F0EEFF;
+
+    /* Anciens alias encore consommés directement par components.css */
+    --surface-2:   #F3F1EE;
+    --text-2:      #44403C;
+    --text-3:      #78716C;
+    --accent-dark: #A85C38;
+    --accent-light:#FAF0EB;
+    --bg-success:  #F0FDF4;
+    --bg-danger:   #FEF2F2;
+    --bg-warning:  #FFFBEB;
+    --blue:        #3B6FD4;
+    --green:       #16A34A;
+  }
+
+  body {
+    background: #FFFFFF;
+  }
+
+  .tabbar,
+  .fab,
+  #toast-host,
+  .no-print,
+  .theme-switch,
+  .session-chip {
+    display: none !important;
+  }
+
+  #app {
+    max-width: 100%;
+    padding-bottom: 0;
+  }
+
+  .card {
+    box-shadow: none;
+    border: 1px solid #D6D2CB;
+    break-inside: avoid;
+  }
+
+  .charts-grid {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+
+/* ===================================================================
+   REPLIS DE COMPATIBILITÉ POUR NAVIGATEURS ANCIENS
+   (WebKit / Safari antérieur à 14.1 sans flexbox gap, ou sans aspect-ratio)
+   =================================================================== */
+
+@supports not (gap: 1px) {
+  .brand > * + * { margin-left: 9px; }
+  .row > * + * { margin-left: 12px; }
+  .row .info > * + * { margin-top: 2px; }
+  .field-row > * + * { margin-left: 10px; }
+  .tag-row > * { margin-right: 6px; margin-top: 0; }
+  .tab > * + * { margin-top: 2px; }
+  .donut-legend > * + * { margin-left: 16px; }
+  #toast-host > * + * { margin-top: 8px; }
+  .gsr-item > * + * { margin-left: 10px; }
+  .chip-actions > * + * { margin-left: 6px; }
+  .swatch-row > * { margin: 0 8px 8px 0; }
+  .liste-card-top > * + * { margin-left: 12px; }
+  .liste-detail-head > * + * { margin-left: 12px; }
+
+  @media (min-width: 900px) {
+    .tabbar > * + * { margin-top: 2px; }
+    .tab > * + * { margin-top: 0; margin-left: 12px; }
+  }
+}
+
+@supports not (aspect-ratio: 1) {
+  .kpi {
+    min-height: 84px;
+  }
+}

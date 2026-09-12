@@ -1,0 +1,120 @@
+/* ===================================================================
+   BASE.CSS — Fondations globales et réinitialisation (CSS Reset)
+   =================================================================== */
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 15px;
+  line-height: var(--leading-normal);
+  transition: background 0.2s ease, color 0.2s ease;
+  overflow-x: hidden;
+}
+
+/* Une seule famille (Inter) : la hiérarchie vient de la taille/graisse,
+   pas d'un changement de police (voir css/variables.css, section Phase A). */
+h1, h2, h3, h4, .font-display {
+  font-family: var(--font-sans);
+  font-weight: 700;
+}
+
+button, input, select, textarea {
+  font-family: inherit;
+  color: inherit;
+}
+
+/* Masquage discret de la barre de défilement native */
+::-webkit-scrollbar {
+  display: none;
+}
+
+/* ===================================================================
+   FOCUS CLAVIER — état par défaut visible sur tout élément interactif.
+   :focus-visible ne se déclenche pas au clic souris/tactile : aucune
+   régression visuelle pour ces usages, seulement pour le clavier.
+   Un composant peut surcharger cette règle s'il a besoin d'un style
+   de focus plus spécifique (voir Phase C/J).
+   =================================================================== */
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
+
+/* ===================================================================
+   ÉCHELLE TYPOGRAPHIQUE — classes utilitaires
+   À utiliser à la place de tailles en dur (style="font-size:...").
+   Display/H1/H2/H3/Body/Body small/Caption, voir css/variables.css.
+   =================================================================== */
+.text-display { font-size: var(--text-display); font-weight: 700; line-height: var(--leading-tight); }
+.text-h1      { font-size: var(--text-h1);      font-weight: 700; line-height: var(--leading-tight); }
+.text-h2      { font-size: var(--text-h2);      font-weight: 600; line-height: var(--leading-tight); }
+.text-h3      { font-size: var(--text-h3);      font-weight: 600; line-height: var(--leading-tight); }
+.text-body-sm { font-size: var(--text-body-sm); font-weight: 400; }
+.text-caption { font-size: var(--text-caption); font-weight: 500; letter-spacing: 0.02em; }
+
+/* Chiffres financiers : chasse fixe pour un alignement en colonnes
+   propre (montants, soldes, tableaux). */
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ===================================================================
+   ANIMATIONS & MICRO-INTERACTIONS
+   =================================================================== */
+
+@keyframes fade {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
+  }
+}
+
+.skeleton-block {
+  height: 80px;
+  background: linear-gradient(90deg, var(--surface-muted) 25%, var(--surface) 37%, var(--surface-muted) 63%);
+  background-size: 400% 100%;
+  border-radius: 16px;
+  margin-bottom: 12px;
+  animation: shimmer 1.4s ease infinite;
+}
+
+/* ===================================================================
+   RÉDUCTION DE MOUVEMENT — respecte le réglage système de l'utilisateur.
+   Les animations décoratives sont neutralisées ; le skeleton garde un
+   simple état statique plutôt qu'un shimmer continu.
+   =================================================================== */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+  .skeleton-block {
+    animation: none;
+    background: var(--surface-muted);
+  }
+}

@@ -232,41 +232,140 @@ db.version(6)
     }
   });
 
-// uid() : genere un identifiant unique. crypto.randomUUID() n'existe pas
-// avant Safari 15.4 (donc absent sur iOS 12, comme sur un iPad mini 2).
-// On utilise crypto.getRandomValues (supporte depuis Safari 6 / iOS 6.1)
-// avec un repli sur Math.random si crypto n'est pas du tout disponible.
-function uid() {
-  if (typeof crypto !== "undefined" && crypto.randomUUID)
-    return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (typeof crypto !== "undefined" && crypto.getRandomValues) {
-    crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < 16; i++) bytes[i] = Math.floor(Math.random() * 256);
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant
-  const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join(
-    "",
-  );
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+// Version 7 : une activite devient un vrai evenement organisationnel et pas
+// seulement une collecte -- ajout de heure, lieu, responsable (membre
+// designe), budget previsionnel et type (sortie/reunion/voyage/collecte/
+// anniversaire/evenement). Schema additif : "type" est indexe des maintenant
+// car le futur module Rapports en aura besoin pour ventiler par categorie ;
+// les autres champs n'ont pas besoin d'index (jamais interroges via .where()).
+//
+// Choix volontaire : PAS de champ "statut" stocke. Comme pour
+// activiteEstOuverte() et getStatutPaiementActivite(), le statut d'une
+// activite (a_venir / en_cours / terminee / annulee) est calcule a la
+// demande depuis sa date -- voir getStatutActivite() plus bas. Seule
+// l'annulation (qui ne peut pas se deduire de la date) est stockee, en
+// miroir du booleen "cloturee" deja existant. Un statut stocke se
+// desynchroniserait de la realite des qu'une date passe sans qu'on rouvre
+// l'activite pour le mettre a jour a la main.
+db.version(7)
+  .stores({
+    membres: "id, nom, prenom, statut, mois_anniversaire",
+    sessions: "id, nom",
+    dimanches: "id, id_session, date, statut",
+    anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+    paiements: "id, id_dimanche, id_membre",
+    remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+    caisse_mouvements: "id, date, type",
+    parametres: "cle",
+    activity_log: "++seq, date, entite, action",
+    listes: "id, nom, date, archivee, type",
+    liste_membres: "id, id_liste, id_membre",
+    prets_membres:
+      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+    liste_frais: "id, id_liste",
+    liste_paiements: "id, id_liste, id_membre",
+  })
+  .upgrade(async (tx) => {
+    const listes = await tx.listes.toArray();
+    for (const l of listes) {
+      // Idempotent : une activite deja migree (type deja present) est
+      // sautee, pour pouvoir rejouer l'upgrade sans ecraser des valeurs
+      // deja choisies par l'utilisateur.
+      if (l.type) continue;
+      await tx.listes.update(l.id, {
+        heure: typeof l.heure !== "undefined" ? l.heure : null,
+        lieu: typeof l.lieu !== "undefined" ? l.lieu : "",
+        id_responsable:
+          typeof l.id_responsable !== "undefined" ? l.id_responsable : null,
+        budget: typeof l.budget !== "undefined" ? l.budget : null,
+        type: "evenement",
+        annulee: false,
+      });
+    }
+  });
+
+// getStatutActivite : statut de l'activite EN TANT QU'EVENEMENT (a_venir /
+// en_cours / terminee / annulee) -- a ne pas confondre avec
+// getStatutPaiementActivite, qui parle de l'argent d'UN participant.
+// L'annulation est la seule information qui ne peut pas se deduire de la
+// date : elle reste stockee (liste.annulee), le reste est toujours recalcule.
+function getStatutActivite(liste) {
+  if (liste.annulee) return "annulee";
+  const today = todayISO();
+  if (liste.date > today) return "a_venir";
+  if (liste.date === today) return "en_cours";
+  return "terminee";
 }
-const todayISO = () => new Date().toISOString().slice(0, 10);
-const MOIS_NOMS = [
-  "Janvier",
-  "Fevrier",
-  "Mars",
-  "Avril",
-  "Mai",
-  "Juin",
-  "Juillet",
-  "Aout",
-  "Septembre",
-  "Octobre",
-  "Novembre",
-  "Decembre",
-];
+
+// Version 8 : Module Depenses (cahier des charges). Decision d'architecture
+// importante : PAS de table "depenses" separee. Le solde de la caisse
+// (caisseDetail) additionne deja les mouvements "Sortie" -- si les depenses
+// vivaient dans une table a part, il faudrait les additionner UNE DEUXIEME
+// FOIS quelque part, avec le risque que les deux totaux divergent avec le
+// temps. On enrichit donc directement les mouvements de type "Sortie" avec
+// les champs demandes (categorie, justificatif photo, auteur, activite
+// liee) : une depense EST un mouvement de caisse sortant, rien de plus.
+// "categorie" est indexee des maintenant pour le futur rapport "Depenses"
+// (ventilation par categorie) mentionne au chapitre Rapports.
+db.version(8)
+  .stores({
+    membres: "id, nom, prenom, statut, mois_anniversaire",
+    sessions: "id, nom",
+    dimanches: "id, id_session, date, statut",
+    anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+    paiements: "id, id_dimanche, id_membre",
+    remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+    caisse_mouvements: "id, date, type, categorie",
+    parametres: "cle",
+    activity_log: "++seq, date, entite, action",
+    listes: "id, nom, date, archivee, type",
+    liste_membres: "id, id_liste, id_membre",
+    prets_membres:
+      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+    liste_frais: "id, id_liste",
+    liste_paiements: "id, id_liste, id_membre",
+  })
+  .upgrade(async (tx) => {
+    const mouvements = await tx.caisse_mouvements.toArray();
+    for (const m of mouvements) {
+      if ("categorie" in m) continue; // deja migre (upgrade rejouable)
+      await tx.caisse_mouvements.update(m.id, {
+        // Une sortie deja existante (avant que les categories n'existent)
+        // est classee "Divers" par defaut plutot que laissee vide : un
+        // rapport "Depenses par categorie" qui ignorerait silencieusement
+        // les vieilles depenses fausserait le total. Une entree n'est par
+        // definition pas une depense, elle n'a pas besoin de categorie.
+        categorie: m.type === "Sortie" ? "Divers" : null,
+        justificatif: null,
+        id_auteur: null,
+        id_activite: null,
+      });
+    }
+  });
+
+// depensesParCategorie : ventilation des sorties de caisse par categorie,
+// utilisee pour le petit recapitulatif dans l'onglet Caisse. Les mouvements
+// d'ajustement (voir ajusterCaisse) portent la categorie "Divers" comme
+// n'importe quelle autre sortie non detaillee -- ce ne sont pas des
+// depenses au sens strict, mais les compter ailleurs creerait un total qui
+// ne boucle plus avec le solde affiche.
+async function depensesParCategorie() {
+  const mouvements = await db.caisse_mouvements
+    .where("type")
+    .equals("Sortie")
+    .toArray();
+  const parCategorie = {};
+  for (const cat of CATEGORIES_DEPENSE) parCategorie[cat] = 0;
+  for (const m of mouvements) {
+    const cat = m.categorie || "Divers";
+    parCategorie[cat] = (parCategorie[cat] || 0) + m.montant;
+  }
+  return parCategorie;
+}
+
+// uid(), todayISO(), MOIS_NOMS, CATEGORIES_DEPENSE, isoToDate et dateToIso
+// sont fournis par config.js et utils.js (chargés avant db.js dans index.html) —
+// ne pas les redéclarer ici.
 
 // groupBy : regroupe un tableau par une cle, en un seul passage memoire.
 // Utilise partout pour remplacer les boucles `for (...) await db.x.where(...)`
@@ -328,6 +427,423 @@ async function seedIfEmpty() {
     "systeme",
     "premier_lancement",
     "Base de donnees initialisee, vide",
+  );
+}
+
+/**
+ * Calcule les dates ISO des N derniers dimanches précédant la date courante.
+ * @param {number} [n=3] - Nombre de dimanches souhaités.
+ * @returns {string[]}
+ */
+function getDerniersDimanchesISO(n = 3) {
+  const dates = [];
+  const cur = new Date();
+  const diff = cur.getDay(); // 0 = dimanche
+  const lastSunday = new Date(cur.getFullYear(), cur.getMonth(), cur.getDate() - diff);
+  for (let i = n - 1; i >= 0; i--) {
+    const d = new Date(lastSunday.getFullYear(), lastSunday.getMonth(), lastSunday.getDate() - (i * 7));
+    dates.push(dateToIso(d));
+  }
+  return dates;
+}
+
+/**
+ * Génère un jeu complet de données de test / démonstration pour explorer l'ensemble
+ * des fonctionnalités (membres, dimanches, cotisations, dettes, prêts, caisse, activités).
+ */
+async function genererDonneesDemo() {
+  await db.transaction(
+    "rw",
+    [
+      db.membres,
+      db.sessions,
+      db.dimanches,
+      db.anniversaires_du_jour,
+      db.paiements,
+      db.remboursements,
+      db.caisse_mouvements,
+      db.listes,
+      db.liste_frais,
+      db.liste_membres,
+      db.liste_paiements,
+      db.prets_membres,
+      db.parametres,
+      db.activity_log,
+    ],
+    async () => {
+      // Nettoyage préalable complet
+      await Promise.all([
+        db.membres.clear(),
+        db.sessions.clear(),
+        db.dimanches.clear(),
+        db.anniversaires_du_jour.clear(),
+        db.paiements.clear(),
+        db.remboursements.clear(),
+        db.caisse_mouvements.clear(),
+        db.listes.clear(),
+        db.liste_frais.clear(),
+        db.liste_membres.clear(),
+        db.liste_paiements.clear(),
+        db.prets_membres.clear(),
+      ]);
+
+      // 1. Session pastorale active
+      const sessionId = "session-2026-2027";
+      await db.sessions.add({ id: sessionId, nom: "2026-2027" });
+      await setParam("session_active", sessionId);
+      await setParam("montant_cotisation_defaut", 500);
+      await setParam("montant_cadeau_defaut", 12000);
+
+      // 2. Membres réalistes (10 profils diversifiés)
+      const curDate = new Date();
+      const curMonth = curDate.getMonth() + 1;
+      const curYear = curDate.getFullYear();
+
+      const demoMembres = [
+        {
+          id: "M001",
+          nom: "KOUAME",
+          prenom: "Koffi",
+          fonction: "President",
+          cotisation_personnalisee: 1000,
+          statut: "Actif",
+          jour_anniversaire: 14,
+          mois_anniversaire: curMonth,
+          annee_naissance: 1996,
+          telephone: "+228 90 11 22 33",
+          date_adhesion: `${curYear - 2}-01-10`,
+        },
+        {
+          id: "M002",
+          nom: "AGBEKO",
+          prenom: "Mawuli",
+          fonction: "Tresorier",
+          statut: "Actif",
+          jour_anniversaire: 5,
+          mois_anniversaire: (curMonth % 12) + 1,
+          annee_naissance: 1997,
+          telephone: "+228 91 22 33 44",
+          date_adhesion: `${curYear - 2}-02-15`,
+        },
+        {
+          id: "M003",
+          nom: "ADJOUA",
+          prenom: "Edwige",
+          fonction: "Secretaire",
+          statut: "Actif",
+          jour_anniversaire: 22,
+          mois_anniversaire: curMonth,
+          annee_naissance: 1999,
+          telephone: "+228 92 33 44 55",
+          date_adhesion: `${curYear - 2}-03-01`,
+        },
+        {
+          id: "M004",
+          nom: "LAWSON",
+          prenom: "Eric",
+          fonction: "Vice-president",
+          statut: "Actif",
+          jour_anniversaire: 10,
+          mois_anniversaire: ((curMonth + 2) % 12) + 1,
+          annee_naissance: 1995,
+          telephone: "+228 93 44 55 66",
+          date_adhesion: `${curYear - 2}-01-15`,
+        },
+        {
+          id: "M005",
+          nom: "AMOUZOU",
+          prenom: "Komlan",
+          fonction: "Charge des activites",
+          statut: "Actif",
+          jour_anniversaire: 18,
+          mois_anniversaire: ((curMonth + 3) % 12) + 1,
+          annee_naissance: 1998,
+          telephone: "+228 90 55 66 77",
+          date_adhesion: `${curYear - 1}-04-12`,
+        },
+        {
+          id: "M006",
+          nom: "DOSSEH",
+          prenom: "Afiwa",
+          fonction: "Responsable priere",
+          statut: "Actif",
+          jour_anniversaire: 28,
+          mois_anniversaire: ((curMonth + 4) % 12) + 1,
+          annee_naissance: 2000,
+          telephone: "+228 91 66 77 88",
+          date_adhesion: `${curYear - 1}-05-20`,
+        },
+        {
+          id: "M007",
+          nom: "TCHALLA",
+          prenom: "Yao",
+          fonction: "Membre",
+          statut: "Actif",
+          jour_anniversaire: 2,
+          mois_anniversaire: ((curMonth + 5) % 12) + 1,
+          annee_naissance: 2001,
+          telephone: "+228 92 77 88 99",
+          date_adhesion: `${curYear - 1}-06-18`,
+        },
+        {
+          id: "M008",
+          nom: "GBEGNON",
+          prenom: "Akouvi",
+          fonction: "Membre",
+          statut: "Actif",
+          jour_anniversaire: 12,
+          mois_anniversaire: ((curMonth + 6) % 12) + 1,
+          annee_naissance: 2002,
+          telephone: "+228 93 88 99 00",
+          date_adhesion: `${curYear - 1}-07-05`,
+        },
+        {
+          id: "M009",
+          nom: "FOLLY",
+          prenom: "Samuel",
+          fonction: "Responsable musique",
+          statut: "Actif",
+          jour_anniversaire: 25,
+          mois_anniversaire: ((curMonth + 7) % 12) + 1,
+          annee_naissance: 1998,
+          telephone: "+228 90 99 00 11",
+          date_adhesion: `${curYear - 1}-08-14`,
+        },
+        {
+          id: "M010",
+          nom: "AYIVI",
+          prenom: "David",
+          fonction: "Membre",
+          statut: "Inactif",
+          jour_anniversaire: 8,
+          mois_anniversaire: ((curMonth + 8) % 12) + 1,
+          annee_naissance: 1997,
+          telephone: "+228 91 00 11 22",
+          date_adhesion: `${curYear - 2}-02-01`,
+        },
+      ];
+
+      for (const m of demoMembres) {
+        await db.membres.add(m);
+      }
+
+      // 3. Trois derniers dimanches avec cotisations & anniversaires
+      const dimDates = getDerniersDimanchesISO(3);
+      const membresActifs = demoMembres.filter((m) => m.statut === "Actif");
+
+      for (let idx = 0; idx < dimDates.length; idx++) {
+        const dimDate = dimDates[idx];
+        const dimId = `dim-demo-${idx + 1}`;
+        await db.dimanches.add({
+          id: dimId,
+          id_session: sessionId,
+          date: dimDate,
+          statut: "clos",
+        });
+
+        // Anniversaires fêtés
+        const feteId = idx === 0 ? "M001" : idx === 1 ? "M002" : "M004";
+        await db.anniversaires_du_jour.add({
+          id: uid(),
+          id_dimanche: dimId,
+          id_membre_fete: feteId,
+          montant_cadeau: 12000,
+        });
+
+        // Paiements des membres
+        for (const m of membresActifs) {
+          const montant = m.cotisation_personnalisee || 500;
+          const pid = `p-${dimId}-${m.id}`;
+
+          let aPaye = true;
+          if (idx === 1 && (m.id === "M007" || m.id === "M008")) {
+            aPaye = false; // impayé (dette)
+          } else if (idx === 2 && m.id === "M008") {
+            aPaye = false; // impayé (dette)
+          }
+
+          await db.paiements.add({
+            id: pid,
+            id_dimanche: dimId,
+            id_membre: m.id,
+            montant_attendu: montant,
+            montant_paye: aPaye ? montant : 0,
+            a_paye: aPaye,
+          });
+
+          // Prêt enregistré sur Dimanche 3 : M005 avancé par le trésorier M002
+          if (idx === 2 && m.id === "M005") {
+            await db.prets_membres.add({
+              id: uid(),
+              id_dimanche: dimId,
+              id_debiteur: "M005",
+              id_preteur: "M002",
+              id_paiement: pid,
+              montant: montant,
+              rembourse: false,
+              date: dimDate,
+            });
+          }
+        }
+      }
+
+      // 4. Mouvements de caisse réalistes
+      await db.caisse_mouvements.add({
+        id: uid(),
+        date: dimDates[0],
+        type: "Entree",
+        montant: 50000,
+        motif: "Report de caisse et dons de soutien",
+        categorie: null,
+        justificatif: null,
+        id_auteur: "M002",
+        id_activite: null,
+      });
+      await db.caisse_mouvements.add({
+        id: uid(),
+        date: dimDates[1],
+        type: "Sortie",
+        montant: 15000,
+        motif: "Location sonorisation et microphones",
+        categorie: "Sono",
+        justificatif: null,
+        id_auteur: "M002",
+        id_activite: null,
+      });
+      await db.caisse_mouvements.add({
+        id: uid(),
+        date: dimDates[2],
+        type: "Sortie",
+        montant: 10000,
+        motif: "Carburant transport délégation paroissiale",
+        categorie: "Transport",
+        justificatif: null,
+        id_auteur: "M002",
+        id_activite: null,
+      });
+      await db.caisse_mouvements.add({
+        id: uid(),
+        date: dimDates[2],
+        type: "Sortie",
+        montant: 5000,
+        motif: "Rafraîchissements et eau minérale",
+        categorie: "Nourriture",
+        justificatif: null,
+        id_auteur: "M002",
+        id_activite: null,
+      });
+
+      // 5. Activité complète avec frais multiples & paiements
+      const actDate = new Date();
+      actDate.setDate(actDate.getDate() + 14); // dans 2 semaines
+      const actDateISO = dateToIso(actDate);
+      const actId = "act-demo-1";
+
+      await db.listes.add({
+        id: actId,
+        nom: "Sortie Détente au Lac Togo",
+        description: "Journée fraternelle de baignade, jeux de société et barbecue partagé.",
+        date: actDateISO,
+        date_limite: actDateISO,
+        heure: "09:00",
+        lieu: "Agbodrafo, Lac Togo",
+        budget: 80000,
+        type: "sortie",
+        couleur: "#2563EB",
+        icone: "tent",
+        archivee: false,
+        cloturee: false,
+        annulee: false,
+        notes: "Départ prévu à 08h30 devant la paroisse en bus affrété.",
+        date_creation: todayISO(),
+      });
+
+      const f1 = uid();
+      const f2 = uid();
+      const f3 = uid();
+      await db.liste_frais.add({ id: f1, id_liste: actId, libelle: "Participation générale", montant: 2000, ordre: 0 });
+      await db.liste_frais.add({ id: f2, id_liste: actId, libelle: "Transport bus aller-retour", montant: 1500, ordre: 1 });
+      await db.liste_frais.add({ id: f3, id_liste: actId, libelle: "Déjeuner buffet & grillades", montant: 2500, ordre: 2 });
+
+      // Inscriptions avec choix de postes de frais
+      const participantsData = [
+        { mid: "M001", frais: [f1, f2, f3], paye: 6000 },
+        { mid: "M002", frais: [f1, f2, f3], paye: 3000 }, // acompte -> Partiel
+        { mid: "M003", frais: [f1, f3], paye: 4500 }, // payé
+        { mid: "M004", frais: [f1, f2], paye: 0 }, // non payé
+        { mid: "M005", frais: [f1], paye: 2000 }, // payé
+        { mid: "M006", frais: [f1, f2, f3], paye: 2000 }, // acompte -> Partiel
+      ];
+
+      for (const p of participantsData) {
+        await db.liste_membres.add({
+          id: uid(),
+          id_liste: actId,
+          id_membre: p.mid,
+          frais_choisis: p.frais,
+        });
+
+        if (p.paye > 0) {
+          await db.liste_paiements.add({
+            id: uid(),
+            id_liste: actId,
+            id_membre: p.mid,
+            montant: p.paye,
+            date: todayISO(),
+            heure: "10:30",
+            commentaire: p.paye >= 4500 ? "Paiement intégral" : "Acompte espèces",
+          });
+        }
+      }
+
+      await log("systeme", "donnees_demo_chargees", "Données de test complètes générées avec succès.");
+    },
+  );
+}
+
+/**
+ * Supprime l'ensemble des données de travail (membres, dimanches, cotisations, caisse, activités)
+ * pour retrouver une base de données entièrement vierge, tout en conservant le mot de passe admin.
+ */
+async function reinitialiserToutesDonnees() {
+  await db.transaction(
+    "rw",
+    [
+      db.membres,
+      db.sessions,
+      db.dimanches,
+      db.anniversaires_du_jour,
+      db.paiements,
+      db.remboursements,
+      db.caisse_mouvements,
+      db.listes,
+      db.liste_frais,
+      db.liste_membres,
+      db.liste_paiements,
+      db.prets_membres,
+      db.activity_log,
+    ],
+    async () => {
+      await Promise.all([
+        db.membres.clear(),
+        db.sessions.clear(),
+        db.dimanches.clear(),
+        db.anniversaires_du_jour.clear(),
+        db.paiements.clear(),
+        db.remboursements.clear(),
+        db.caisse_mouvements.clear(),
+        db.listes.clear(),
+        db.liste_frais.clear(),
+        db.liste_membres.clear(),
+        db.liste_paiements.clear(),
+        db.prets_membres.clear(),
+        db.activity_log.clear(),
+      ]);
+
+      await setParam("montant_cotisation_defaut", 500);
+      await setParam("montant_cadeau_defaut", 12000);
+      await log("systeme", "remise_a_zero", "Base de données entièrement réinitialisée.");
+    },
   );
 }
 
@@ -520,9 +1036,108 @@ async function ajusterCaisse(montantReel) {
     type: ecart > 0 ? "Entree" : "Sortie",
     montant: Math.abs(ecart),
     libelle: `Ajustement caisse (solde reel : ${montantReel} F)`,
+    categorie: ecart > 0 ? null : "Divers",
+    justificatif: null,
+    id_auteur: null,
+    id_activite: null,
   });
   await log("caisse", "ajustement", `${avant.solde} F -> ${montantReel} F`);
   return { ecart };
+}
+
+// fluxCaisseMoisCourant : depenses et recettes du mois EN COURS, pour le
+// Dashboard. Les "recettes" additionnent les cotisations collectees (via
+// les dimanches du mois) et les entrees manuelles du mois -- les depenses
+// ne sont que les sorties de caisse du mois (voir Module Depenses). Comme
+// caisseDetail(), c'est un recalcul a la demande : aucun total mensuel
+// n'est stocke nulle part, donc rien ne peut jamais se desynchroniser.
+async function fluxCaisseMoisCourant() {
+  const prefixMois = todayISO().slice(0, 7); // "YYYY-MM"
+  const [mouvements, dimanches, paiements] = await Promise.all([
+    db.caisse_mouvements.toArray(),
+    db.dimanches.toArray(),
+    db.paiements.toArray(),
+  ]);
+  const depensesMois = mouvements
+    .filter((m) => m.type === "Sortie" && m.date.startsWith(prefixMois))
+    .reduce((a, m) => a + m.montant, 0);
+  const entreesManuellesMois = mouvements
+    .filter((m) => m.type === "Entree" && m.date.startsWith(prefixMois))
+    .reduce((a, m) => a + m.montant, 0);
+  const dimanchesMoisIds = new Set(
+    dimanches.filter((d) => d.date.startsWith(prefixMois)).map((d) => d.id),
+  );
+  const cotisationsMois = paiements
+    .filter((p) => dimanchesMoisIds.has(p.id_dimanche))
+    .reduce((a, p) => a + p.montant_paye, 0);
+  return {
+    depensesMois,
+    recettesMois: entreesManuellesMois + cotisationsMois,
+  };
+}
+
+// prochainesActivites : les activites a venir (ou en cours aujourd'hui),
+// ni archivees ni annulees, triees par date puis heure -- pour la section
+// "Prochaines echeances" du Dashboard (cahier des charges V2).
+async function prochainesActivites(limite = 5) {
+  const today = todayISO();
+  const all = await db.listes.toArray();
+  return all
+    .filter((l) => !l.archivee && !l.annulee && l.date >= today)
+    .sort((a, b) =>
+      (a.date + (a.heure || "")).localeCompare(b.date + (b.heure || "")),
+    )
+    .slice(0, limite);
+}
+
+// evenementsEntreDates : fusionne activites et anniversaires en une liste
+// unique d'"evenements de calendrier" pour les vues Mois/Semaine/Jour.
+// On renvoie volontairement l'objet "liste" ou "membre" BRUT dans chaque
+// evenement plutot que des champs deja mis en forme (nom complet, couleur
+// validee...) : ces mises en forme dependent de helpers d'affichage
+// (fullName, safeColor) qui vivent dans app.js, pas ici. db.js ne connait
+// que les donnees, jamais leur presentation.
+async function evenementsEntreDates(dateDebutISO, dateFinISO) {
+  const [listes, membres] = await Promise.all([
+    db.listes.toArray(),
+    db.membres.toArray(),
+  ]);
+  const evenements = [];
+
+  for (const l of listes) {
+    if (l.archivee || l.annulee) continue;
+    if (l.date >= dateDebutISO && l.date <= dateFinISO) {
+      evenements.push({ date: l.date, heure: l.heure, type: "activite", liste: l });
+    }
+  }
+
+  // Un anniversaire n'a pas d'annee propre (jour_anniversaire/mois_anniversaire
+  // seulement) : on le projette sur chaque annee couverte par la plage
+  // demandee. Une vue Mois/Semaine/Jour ne traverse jamais plus de 2 annees
+  // civiles (le cas limite etant une semaine a cheval sur le 31 decembre).
+  const anneesAVerifier = new Set([
+    isoToDate(dateDebutISO).getFullYear(),
+    isoToDate(dateFinISO).getFullYear(),
+  ]);
+  for (const m of membres) {
+    if (!m.jour_anniversaire || !m.mois_anniversaire || m.statut !== "Actif")
+      continue;
+    for (const annee of anneesAVerifier) {
+      // new Date(annee, mois-1, jour) deborde naturellement sur mars pour un
+      // 29 fevrier hors annee bissextile -- meme comportement deja accepte
+      // ailleurs dans l'app (prochaineOccurrenceAnniversaire).
+      const bdayISO = dateToIso(
+        new Date(annee, m.mois_anniversaire - 1, m.jour_anniversaire),
+      );
+      if (bdayISO >= dateDebutISO && bdayISO <= dateFinISO) {
+        evenements.push({ date: bdayISO, heure: null, type: "anniversaire", membre: m });
+      }
+    }
+  }
+
+  return evenements.sort((a, b) =>
+    (a.date + (a.heure || "")).localeCompare(b.date + (b.heure || "")),
+  );
 }
 
 async function joursAvecStats() {
@@ -615,12 +1230,6 @@ function sameDate(a, b) {
     a.getMonth() === b.getMonth() &&
     a.getDate() === b.getDate()
   );
-}
-function isoToDate(iso) {
-  return new Date(iso + "T00:00:00");
-}
-function dateToIso(d) {
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
 }
 
 // Pour un dimanche donne, quels membres devraient etre fetes ce jour-la
@@ -1145,6 +1754,11 @@ async function creerListe({
   icone,
   montant_demande,
   notes,
+  heure,
+  lieu,
+  id_responsable,
+  budget,
+  type,
 }) {
   const id = uid();
   await db.listes.add({
@@ -1155,12 +1769,21 @@ async function creerListe({
     // date_limite : facultative -- une activite sans date limite reste
     // ouverte indefiniment (voir activiteEstOuverte).
     date_limite: date_limite || null,
-    couleur: couleur || "#2563EB",
+    couleur: couleur || "#6366F1",
     icone: icone || "star",
     montant_demande: montant_demande || null,
     notes: (notes || "").trim(),
     archivee: false,
     date_creation: todayISO(),
+    // Module Activites v2 : heure/lieu/responsable/budget sont tous
+    // facultatifs (une sortie improvisee n'a pas forcement de lieu fixe a
+    // l'avance) ; type retombe sur "evenement" si non precise.
+    heure: heure || null,
+    lieu: (lieu || "").trim(),
+    id_responsable: id_responsable || null,
+    budget: budget || null,
+    type: type || "evenement",
+    annulee: false,
   });
   await log("liste", "creee", id);
   return id;
@@ -1188,6 +1811,7 @@ async function dupliquerListe(id) {
     nom: src.nom + " (copie)",
     archivee: false,
     cloturee: false,
+    annulee: false,
     date_creation: todayISO(),
   });
 
