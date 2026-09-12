@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v20"; // v20 : Refonte UI/UX Phase A — design tokens, typographie Inter unifiée, thème
+const CACHE_NAME = "m3d-cache-v21"; // v21 : Refonte UI/UX Phase B — navigation par domaines (Finance, Activites, Systeme separe)
 
 const ASSETS = [
   "./",

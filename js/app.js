@@ -82,7 +82,7 @@ async function synchroniserSessionTopBar(nomSession) {
 /**
  * Affiche l'onglet sélectionné et orchestre le rendu de son contrôleur de vue.
  *
- * @param {string} tab - Identifiant de l'onglet ("accueil", "membres", "dimanche", "dettes", "plus").
+ * @param {string} tab - Identifiant de l'onglet ("accueil", "membres", "dimanche", "finance", "activites").
  * @returns {Promise<void>}
  */
 async function showTab(tab) {
@@ -103,8 +103,8 @@ async function showTab(tab) {
     if (tab === "accueil") await renderAccueil();
     else if (tab === "membres") await renderMembres();
     else if (tab === "dimanche") await renderDimanche();
-    else if (tab === "dettes") await renderDettes();
-    else if (tab === "plus") await renderPlus();
+    else if (tab === "finance") await renderFinance();
+    else if (tab === "activites") await renderActivites();
   } catch (err) {
     console.error("Erreur lors du rendu de l'onglet :", err);
     app.innerHTML = `<div class="empty">Une erreur est survenue lors du chargement de cet écran.<br><span class="small-note">${esc(err.message)}</span></div>`;
@@ -243,7 +243,7 @@ async function renderAccueil() {
   // Branchement des clics sur les KPI interactifs
   document.getElementById("kpiListes").addEventListener("click", () => renderListes());
   const backupWarnBox = document.getElementById("backupWarnBox");
-  if (backupWarnBox) backupWarnBox.addEventListener("click", () => showTab("plus"));
+  if (backupWarnBox) backupWarnBox.addEventListener("click", () => openSysteme());
 
   document.getElementById("kpiIrreguliers").addEventListener("click", () => {
     openARelancerSheet(aRelancer.filter((x) => x.irregulier));
@@ -1399,7 +1399,7 @@ async function openWeekDetail(dimId) {
     const pretOv = openSheet(`
       <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
       <h3>Qui a avance l'argent ?</h3>
-      <div class="small-note" style="margin-bottom:10px;">La cotisation sera marquee payee pour le groupe. Le pret sera suivi dans Plus &rarr; Prets entre membres.</div>
+      <div class="small-note" style="margin-bottom:10px;">La cotisation sera marquee payee pour le groupe. Le pret sera suivi dans Finance &rarr; Prets entre membres.</div>
       <div id="pret_list"></div>
     `);
 
@@ -1437,7 +1437,7 @@ async function openWeekDetail(dimId) {
     await supprimerDimanche(dimId);
     closeSheet();
     toast("Dimanche supprime");
-    showTab(getCurrentTab() === "plus" ? "dimanche" : getCurrentTab());
+    showTab("dimanche");
   });
 }
 
@@ -1455,14 +1455,17 @@ async function renderDettes() {
   const total = impayees.reduce((a, d) => a + d.montant, 0);
 
   app.innerHTML = `
+    <button class="btn-chip" id="dettesBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
     <div class="card" style="text-align:center;padding:20px;margin-bottom:18px;">
       <div class="small-note">Total impaye</div>
-      <div style="font-family:var(--font-display);font-size:28px;font-weight:700;color:var(--danger);margin-top:2px;">${fmt(total)}</div>
+      <div style="font-family:var(--font-sans);font-size:28px;font-weight:700;color:var(--danger);margin-top:2px;">${fmt(total)}</div>
     </div>
     <div class="section-title" style="margin-top:0;"><h2>Impayees (${impayees.length})</h2></div>
     <div class="card list-card" id="dettesImpayees"></div>
     ${remboursees.length ? `<div class="section-title"><h2>Remboursees (${remboursees.length})</h2></div><div class="card list-card" id="dettesRemb"></div>` : ""}
   `;
+
+  document.getElementById("dettesBackBtn").addEventListener("click", () => showTab("finance"));
 
   const rowHTML = (d, actionable) => `
     <div class="row" ${actionable ? `data-paiement="${d.id_paiement}"` : ""}>
@@ -1553,7 +1556,7 @@ async function renderPretsMembres() {
     <div id="pretsBox"></div>
   `;
 
-  document.getElementById("pretsBackBtn").addEventListener("click", () => showTab("plus"));
+  document.getElementById("pretsBackBtn").addEventListener("click", () => showTab("finance"));
   document.getElementById("prets_filtre_attente").addEventListener("click", () => {
     pretsShowRembourses = false;
     renderPretsMembres();
@@ -1615,7 +1618,7 @@ async function renderListes() {
     <div class="fab-zone"><button class="fab" id="addListeBtn" aria-label="Creer une activite"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg></button></div>
   `;
 
-  document.getElementById("listesBackBtn").addEventListener("click", () => showTab("plus"));
+  document.getElementById("listesBackBtn").addEventListener("click", () => showTab("activites"));
   document.getElementById("listesSearch").addEventListener("input", (e) => {
     listesQuery = /** @type {HTMLInputElement} */ (e.target).value;
     renderListesList();
@@ -2267,7 +2270,7 @@ async function renderCalendrier() {
     <div id="cal_selection_details"></div>
   `;
 
-  document.getElementById("calBackBtn").addEventListener("click", () => showTab("plus"));
+  document.getElementById("calBackBtn").addEventListener("click", () => showTab("activites"));
 
   ["mois", "semaine", "jour"].forEach((v) => {
     document.getElementById(`cal_vue_${v}`).addEventListener("click", () => {
@@ -2475,50 +2478,69 @@ function wireEvenementsClick(root) {
 }
 
 // ============================================================================
-// ONGLET PLUS — CAISSE, DÉPENSES, PARAMÈTRES, SAUVEGARDE & RAPPORTS
+// FINANCE — HUB CAISSE, DETTES & PRÊTS
 // ============================================================================
 
 /**
- * Rendu principal de l'onglet Plus.
+ * Onglet Finance : regroupe Caisse, Dettes et Prêts entre membres, qui
+ * vivaient auparavant dispersés dans l'onglet "Plus" (Caisse, Prêts) et
+ * dans un onglet à part (Dettes). Phase B : uniquement la navigation change
+ * ici — le contenu de chaque destination reste celui d'avant la refonte ;
+ * leur présentation commune sera revue en Phase G.
  */
-async function renderPlus() {
+async function renderFinance() {
   const cd = await caisseDetail();
-  const manuels = (await db.caisse_mouvements.toArray()).sort((a, b) => b.date.localeCompare(a.date));
-  const depensesCat = await depensesParCategorie();
-  const totalDepensesCategorisees = Object.values(depensesCat).reduce((a, v) => a + v, 0);
-
-  const montantCotis = await getParam("montant_cotisation_defaut", 500);
-  const montantCadeau = await getParam("montant_cadeau_defaut", 12000);
+  const dettesTotal = await totalDettesImpayees();
   const pretsEnAttente = (await pretsMembres({ nonRembourseSeulement: true })).length;
 
   app.innerHTML = `
-    <div class="section-title" style="margin-top:0;"><h2>Mes listes / Activites</h2></div>
-    <div class="card list-card" id="plusListesBox" style="margin-bottom:16px;cursor:pointer;">
+    <div class="section-title" style="margin-top:0;"><h2>Finance</h2></div>
+    <div class="card list-card" id="financeCaisseBox" style="margin-bottom:12px;cursor:pointer;">
       <div class="row" style="border:none;padding:2px 4px;">
-        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg></span>
-        <div class="info"><div class="name">Listes &amp; Activites</div><div class="meta">Sorties, reunions, camps, evenements...</div></div>
+        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path stroke-linecap="round" d="M6 12h.01M18 12h.01"/></svg></span>
+        <div class="info"><div class="name">Caisse</div><div class="meta">Solde actuel : ${fmt(cd.solde)}</div></div>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
       </div>
     </div>
-    <div class="card list-card" id="plusCalendrierBox" style="margin-bottom:16px;cursor:pointer;">
+    <div class="card list-card" id="financeDettesBox" style="margin-bottom:12px;cursor:pointer;">
       <div class="row" style="border:none;padding:2px 4px;">
-        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 2v3M16 2v3M3 9h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
-        <div class="info"><div class="name">Calendrier</div><div class="meta">Vue mois, semaine et jour des activites et anniversaires</div></div>
+        <span class="liste-icon" style="background:var(--bg-danger);color:var(--danger);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4M12 16h.01"/></svg></span>
+        <div class="info"><div class="name">Dettes</div><div class="meta">${dettesTotal > 0 ? `${fmt(dettesTotal)} impayes` : "Aucune dette en cours"}</div></div>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
       </div>
     </div>
-    <div class="card list-card" id="plusPretsBox" style="margin-bottom:24px;cursor:pointer;">
+    <div class="card list-card" id="financePretsBox" style="margin-bottom:24px;cursor:pointer;">
       <div class="row" style="border:none;padding:2px 4px;">
         <span class="liste-icon" style="background:var(--bg-warning);color:var(--warning);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2M9 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H11a2 2 0 0 0-2 2v9Z"/></svg></span>
         <div class="info"><div class="name">Prets entre membres</div><div class="meta">${pretsEnAttente > 0 ? `${pretsEnAttente} en attente de remboursement` : "Aucun pret en attente"}</div></div>
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
       </div>
     </div>
+  `;
 
+  document.getElementById("financeCaisseBox").addEventListener("click", renderCaisse);
+  document.getElementById("financeDettesBox").addEventListener("click", renderDettes);
+  document.getElementById("financePretsBox").addEventListener("click", renderPretsMembres);
+}
+
+/**
+ * Détail de la Caisse : solde, mouvements, dépenses par catégorie, dettes
+ * impayées non incluses, ajout/ajustement manuels. Extrait tel quel de
+ * l'ancien onglet "Plus" (Phase B : déplacement de navigation uniquement,
+ * aucun changement de contenu ni de logique).
+ */
+async function renderCaisse() {
+  const cd = await caisseDetail();
+  const manuels = (await db.caisse_mouvements.toArray()).sort((a, b) => b.date.localeCompare(a.date));
+  const depensesCat = await depensesParCategorie();
+  const totalDepensesCategorisees = Object.values(depensesCat).reduce((a, v) => a + v, 0);
+
+  app.innerHTML = `
+    <button class="btn-chip" id="caisseBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
     <div class="section-title" style="margin-top:0;"><h2>Caisse</h2></div>
     <div class="card" style="text-align:center;padding:20px;margin-bottom:14px;">
       <div class="small-note">Solde actuel</div>
-      <div style="font-family:var(--font-display);font-size:28px;font-weight:700;color:var(--success);margin-top:2px;">${fmt(cd.solde)}</div>
+      <div class="num" style="font-family:var(--font-sans);font-size:28px;font-weight:700;color:var(--success);margin-top:2px;">${fmt(cd.solde)}</div>
     </div>
     <div class="card list-card" style="margin-bottom:14px;">
       <div class="detail-row"><span class="k">Cotisations encaissees</span><span class="v" style="color:var(--success);">+ ${fmt(cd.totalCollecte)}</span></div>
@@ -2544,8 +2566,95 @@ async function renderPlus() {
     <button class="btn btn-ghost" id="addMouvBtn" style="margin-bottom:10px;">+ Mouvement manuel (achat, depense...)</button>
     <button class="btn btn-ghost" id="ajusterCaisseBtn" style="margin-bottom:18px;">Ajuster la caisse (montant reel en main)</button>
     <div class="card list-card" id="mouvList" style="margin-bottom:24px;"></div>
+  `;
 
-    <div class="section-title"><h2>Parametres</h2></div>
+  document.getElementById("caisseBackBtn").addEventListener("click", () => showTab("finance"));
+
+  document.getElementById("mouvList").innerHTML =
+    manuels.map((m) => `
+      <div class="row" data-mv-id="${m.id}" style="cursor:pointer;">
+        <div class="avatar" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}</div>
+        <div class="info">
+          <div class="name">${esc(m.libelle)}${m.justificatif ? ` <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="var(--text-3)" stroke-width="2" style="vertical-align:-2px;" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/></svg>` : ""}</div>
+          <div class="meta">${fmtDate(m.date)}${m.categorie ? " &middot; " + esc(m.categorie) : ""}</div>
+        </div>
+        <span class="badge" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}${fmt(m.montant)}</span>
+      </div>`).join("") || emptyHTML("Aucun mouvement manuel.");
+
+  document.querySelectorAll("#mouvList [data-mv-id]").forEach((row) =>
+    row.addEventListener("click", () => openMouvementDetail(/** @type {HTMLElement} */ (row).dataset.mvId)),
+  );
+
+  document.getElementById("addMouvBtn").addEventListener("click", openAddMouvement);
+  document.getElementById("ajusterCaisseBtn").addEventListener("click", openAjusterCaisse);
+}
+
+// ============================================================================
+// ACTIVITÉS — HUB LISTES/ACTIVITÉS & CALENDRIER
+// ============================================================================
+
+/**
+ * Onglet Activités : regroupe les Listes/Activités et le Calendrier, qui
+ * vivaient tous deux comme simples liens dans l'ancien onglet "Plus".
+ * Phase B : uniquement la navigation change ici.
+ */
+async function renderActivites() {
+  app.innerHTML = `
+    <div class="section-title" style="margin-top:0;"><h2>Activites</h2></div>
+    <div class="card list-card" id="activitesListesBox" style="margin-bottom:12px;cursor:pointer;">
+      <div class="row" style="border:none;padding:2px 4px;">
+        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M9 6h11M9 12h11M9 18h11M4.5 6h.01M4.5 12h.01M4.5 18h.01"/></svg></span>
+        <div class="info"><div class="name">Listes &amp; Activites</div><div class="meta">Sorties, reunions, camps, evenements...</div></div>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
+      </div>
+    </div>
+    <div class="card list-card" id="activitesCalendrierBox" style="margin-bottom:24px;cursor:pointer;">
+      <div class="row" style="border:none;padding:2px 4px;">
+        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 2v3M16 2v3M3 9h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
+        <div class="info"><div class="name">Calendrier</div><div class="meta">Vue mois, semaine et jour des activites et anniversaires</div></div>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("activitesListesBox").addEventListener("click", renderListes);
+  document.getElementById("activitesCalendrierBox").addEventListener("click", renderCalendrier);
+}
+
+// ============================================================================
+// SYSTÈME — PARAMÈTRES, SAUVEGARDE, DÉMONSTRATION, EXPORT & ZONE DANGEREUSE
+// ============================================================================
+
+/** Onglet actif à restaurer quand on quitte l'écran Système. */
+let systemeReturnTab = "accueil";
+
+/**
+ * Point d'entrée du Système : mémorise l'onglet courant pour pouvoir y
+ * revenir, puis affiche l'écran Système. Appelé depuis l'icône dédiée de
+ * la topbar (visible sur tous les écrans), et non depuis la barre
+ * d'onglets — le Système est volontairement un espace séparé des 5
+ * domaines métier (Accueil, Membres, Cotisations, Finance, Activités).
+ */
+function openSysteme() {
+  systemeReturnTab = getCurrentTab();
+  renderSysteme();
+}
+
+/**
+ * Rendu de l'écran Système : reprend tel quel le contenu de l'ancien
+ * onglet "Plus" une fois Caisse/Dettes/Prêts/Listes/Calendrier sortis
+ * vers Finance et Activités. Phase B : uniquement la navigation change
+ * ici ; la présentation de ces sections sera revue en Phase I.
+ */
+async function renderSysteme() {
+  const montantCotis = await getParam("montant_cotisation_defaut", 500);
+  const montantCadeau = await getParam("montant_cadeau_defaut", 12000);
+
+  app.innerHTML = `
+    <button class="btn-chip" id="systemeBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
+    <div class="section-title" style="margin-top:0;"><h2>Systeme</h2></div>
+
+    <div class="section-title" style="margin-top:0;"><h2>Parametres</h2></div>
     <div class="card" style="margin-bottom:24px;">
       <div class="field"><label for="p_cotis">Cotisation par defaut (FCFA)</label><input id="p_cotis" type="number" value="${montantCotis}"></div>
       <div class="field"><label for="p_cadeau">Cadeau par defaut (FCFA)</label><input id="p_cadeau" type="number" value="${montantCadeau}"></div>
@@ -2601,26 +2710,7 @@ async function renderPlus() {
     </div>
   `;
 
-  document.getElementById("mouvList").innerHTML =
-    manuels.map((m) => `
-      <div class="row" data-mv-id="${m.id}" style="cursor:pointer;">
-        <div class="avatar" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}</div>
-        <div class="info">
-          <div class="name">${esc(m.libelle)}${m.justificatif ? ` <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="var(--text-3)" stroke-width="2" style="vertical-align:-2px;" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/></svg>` : ""}</div>
-          <div class="meta">${fmtDate(m.date)}${m.categorie ? " &middot; " + esc(m.categorie) : ""}</div>
-        </div>
-        <span class="badge" style="background:${m.type === "Entree" ? "var(--bg-success)" : "var(--bg-danger)"};color:${m.type === "Entree" ? "var(--success)" : "var(--danger)"};">${m.type === "Entree" ? "+" : "-"}${fmt(m.montant)}</span>
-      </div>`).join("") || emptyHTML("Aucun mouvement manuel.");
-
-  document.querySelectorAll("#mouvList [data-mv-id]").forEach((row) =>
-    row.addEventListener("click", () => openMouvementDetail(/** @type {HTMLElement} */ (row).dataset.mvId)),
-  );
-
-  document.getElementById("plusListesBox").addEventListener("click", renderListes);
-  document.getElementById("plusCalendrierBox").addEventListener("click", renderCalendrier);
-  document.getElementById("plusPretsBox").addEventListener("click", renderPretsMembres);
-  document.getElementById("addMouvBtn").addEventListener("click", openAddMouvement);
-  document.getElementById("ajusterCaisseBtn").addEventListener("click", openAjusterCaisse);
+  document.getElementById("systemeBackBtn").addEventListener("click", () => showTab(systemeReturnTab));
 
   document.getElementById("saveParamsBtn").addEventListener("click", async () => {
     const cotis = Number(/** @type {HTMLInputElement} */ (document.getElementById("p_cotis")).value) || 500;
@@ -2678,7 +2768,7 @@ async function renderPlus() {
     if (!ok) return;
     await supprimerTousLesAnniversairesMembres();
     toast("Tous les anniversaires ont ete supprimes");
-    showTab("plus");
+    renderSysteme();
   });
 
   document.getElementById("resetCotisBtn").addEventListener("click", async () => {
@@ -2690,7 +2780,7 @@ async function renderPlus() {
     await reinitialiserCotisations();
     const apres = await db.membres.count();
     toast(`Cotisations reinitialisees — ${apres} membres conserves (${avant} avant)`);
-    showTab("plus");
+    renderSysteme();
   });
 }
 
@@ -2785,7 +2875,7 @@ function openAddMouvement() {
     await log("caisse", "mouvement_manuel", montant);
     closeSheet();
     toast(estDepense ? "Depense enregistree" : "Mouvement enregistre");
-    renderPlus();
+    renderCaisse();
   });
 }
 
@@ -2840,7 +2930,7 @@ async function openAjusterCaisse() {
     const { ecart } = await ajusterCaisse(montant);
     closeSheet();
     toast(ecart === 0 ? "Deja a jour" : `Caisse ajustee (${ecart > 0 ? "+" : ""}${fmt(ecart)})`);
-    renderPlus();
+    renderCaisse();
   });
 }
 
@@ -3424,6 +3514,9 @@ function showLoginScreen() {
 document.querySelectorAll(".tab").forEach((b) => {
   b.addEventListener("click", () => showTab(/** @type {HTMLElement} */ (b).dataset.tab));
 });
+
+// Système : espace séparé des 5 onglets métier, accessible depuis la topbar
+document.getElementById("systemeBtn").addEventListener("click", () => openSysteme());
 
 // Initialisation du thème avant tout rendu
 initTheme();

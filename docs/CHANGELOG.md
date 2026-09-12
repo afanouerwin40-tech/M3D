@@ -2,7 +2,7 @@
 
 Toutes les modifications notables apportées au projet M3D sont consignées dans ce document.
 
-## [1.0.0] ---
+---
 
 ## [17.1.0] - 2026-09-08
 

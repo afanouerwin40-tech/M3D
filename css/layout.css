@@ -60,6 +60,13 @@
   border-radius: var(--radius-full);
 }
 
+.topbar-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -165,7 +172,7 @@
 
 .tab.active .tab-bump {
   background: var(--accent);
-  box-shadow: 0 10px 20px -4px rgba(99, 102, 241, 0.55), 0 2px 0 var(--surface);
+  box-shadow: 0 10px 20px -4px rgba(196, 113, 74, 0.55), 0 2px 0 var(--surface);
 }
 
 @supports (background: color-mix(in srgb, red 50%, transparent)) {
@@ -209,7 +216,7 @@
   background: var(--accent);
   color: #FFFFFF;
   border: none;
-  box-shadow: 0 8px 20px rgba(99, 102, 241, 0.35);
+  box-shadow: 0 8px 20px rgba(196, 113, 74, 0.35);
   display: flex;
   align-items: center;
   justify-content: center;

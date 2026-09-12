@@ -140,7 +140,122 @@ commencer. Aucun contenu non vérifié n'a été conservé.
 
 ---
 
+## Phase B — Navigation, layout, sidebar desktop
+
+### Ce qui a changé et pourquoi
+
+L'ancienne navigation (Accueil / Membres / Dimanche / Dettes / **Plus**)
+avait un onglet « Plus » fourre-tout mélangeant Caisse, Prêts, Listes,
+Calendrier, Paramètres, Sauvegarde, données de démo, export PDF, apparence
+et une zone dangereuse — voir `UI-UX-AUDIT.md` section 5. Nouvelle
+organisation, par domaine métier :
+
+**Accueil · Membres · Cotisations · Finance · Activités**, plus un espace
+**Système** volontairement séparé des 5 domaines (icône dédiée dans la
+topbar, jamais un 6ᵉ onglet).
+
+- **Cotisations** = l'ancien onglet « Dimanche », **seul le libellé change**
+  (`data-tab="dimanche"` conservé tel quel en interne : fonctions
+  `renderDimanche*`, logique métier, tout reste identique — aucun risque).
+- **Finance** = nouveau hub regroupant Caisse (déplacée hors de Plus),
+  Dettes (ancien onglet racine) et Prêts (déplacé hors de Plus). Chaque
+  destination garde son contenu strictement inchangé ; seule la façon d'y
+  accéder change. `renderDettes()` et `renderPretsMembres()` n'avaient
+  jamais eu besoin de bouton retour tant qu'ils étaient des destinations
+  racines ou des liens depuis Plus dans un sens fixe — un bouton « ←
+  Retour » vers Finance a été ajouté à `renderDettes()` (elle n'en avait
+  aucun) pour ne pas laisser d'impasse.
+- **Activités** = nouveau hub regroupant Listes/Activités et Calendrier
+  (tous deux déplacés hors de Plus, contenu inchangé).
+- **Système** = tout ce qu'il restait de Plus une fois Finance et Activités
+  extraits : Paramètres, Sauvegarde, Données de test, Export & impression,
+  Apparence, À propos, Zone dangereuse. Reste accessible depuis n'importe
+  quel écran via une icône dédiée dans la topbar (mobile et desktop), pas
+  depuis la barre d'onglets — conformément à la demande de garder les
+  fonctions système dans un espace séparé. Le bouton retour restaure
+  l'onglet réellement actif avant l'ouverture (`systemeReturnTab`), pas une
+  destination fixe.
+- **Sidebar desktop** : elle existait déjà (transformation CSS pure de la
+  tabbar à partir de 900px, dans `responsive.css`) — l'audit initial ne
+  l'avait pas assez mise en valeur. Aucun nouveau CSS de structure n'a été
+  nécessaire : les 5 nouveaux onglets en héritent automatiquement, avec le
+  même nombre d'éléments (5) qu'avant.
+- Deux ombres CSS figées sur l'ancien Indigo (`rgba(99, 102, 241, ...)`)
+  trouvées en cours de route dans `layout.css` (glow du tab actif sur
+  mobile, ombre du FAB) — corrigées vers l'équivalent terracotta.
+
+### Fichiers modifiés
+
+`index.html` (topbar + tabbar), `css/layout.css` (`.topbar-actions`,
+correction des ombres), `js/app.js` (module Plus éclaté en `renderFinance`,
+`renderCaisse`, `renderActivites`, `renderSysteme` + `openSysteme` ;
+routeur `showTab()` mis à jour ; tous les boutons retour et liens internes
+qui pointaient vers l'ancien Plus/Dettes redirigés vers leur nouvelle
+destination), `sw.js` (cache `v20` → `v21`).
+
+**`js/db.js` : aucune ligne modifiée.**
+
+### Ce qui n'a délibérément pas été touché
+
+- Le contenu visuel de Caisse, Dettes, Prêts, Listes, Calendrier, et de
+  toutes les sections de Système : strictement copié-collé depuis l'ancien
+  Plus. Leur redesign réel est prévu aux Phases G (Dettes/Caisse/Prêts),
+  H (Activités/Calendrier) et I (Système), une fois les composants de la
+  Phase C disponibles.
+- Le hub Finance/Activités utilise le même patron « cartes-liens vers un
+  écran plein » que l'ancien Plus (pas de sous-onglets en direct) — choix
+  délibéré pour rester à risque minimal en Phase B ; la Phase G construira
+  une vraie navigation interne unifiée avec le composant Tabs/
+  SegmentedControl de la Phase C.
+- La séparation visuelle entre bouton « Charger les données de test »
+  (primaire) et « Effacer toutes les données » (destructeur, même carte,
+  seule la couleur de texte les distingue) n'a pas été retravaillée ici —
+  contenu simplement déplacé tel quel vers Système. Traitement visuel réel
+  prévu en Phase I, conformément à la directive sur les actions
+  dangereuses.
+
+### Vérifications effectuées
+
+- Recherche exhaustive de toute référence résiduelle à l'ancien onglet
+  « plus » ou à `renderPlus` dans le code : deux appels oubliés retrouvés
+  et corrigés (`openAddMouvement`, `openAjusterCaisse`, qui rafraîchissaient
+  l'écran après une action — ils rafraîchissent maintenant `renderCaisse()`).
+- Chaque `getElementById(...)` des fonctions touchées confronté
+  automatiquement à la liste des `id="..."` réellement présents dans son
+  propre template : aucun identifiant manquant.
+- Les 6 fichiers `.js` revalidés avec `acorn` en `ecmaVersion: 2019`
+  (Safari 12) après les changements : tous passent, y compris `js/app.js`
+  (le plus modifié).
+- Les 6 fichiers `.css` revalidés avec un parseur strict : aucune erreur.
+- Comparaison directe avec le zip original : seuls `index.html`,
+  `css/layout.css`, `js/app.js`, `sw.js` diffèrent en plus des fichiers de
+  la Phase A ci-dessus ; `js/db.js` confirmé identique caractère pour
+  caractère.
+- Parcours de navigation revérifiés manuellement un par un (voir tableau) :
+
+| Action | Avant | Après |
+|---|---|---|
+| Ouvrir Caisse | Plus → (scroll) | Finance → Caisse → retour Finance |
+| Ouvrir Dettes | Onglet racine, aucun retour | Finance → Dettes → retour Finance (nouveau) |
+| Ouvrir Prêts | Plus → Prêts → retour Plus | Finance → Prêts → retour Finance |
+| Ouvrir Listes/Calendrier | Plus → ... → retour Plus | Activités → ... → retour Activités |
+| Ouvrir Paramètres/Sauvegarde/Export | Onglet Plus | Icône Système → retour à l'onglet d'origine |
+| Alerte "sauvegarde requise" sur Accueil | → Plus | → Système, retour → Accueil |
+
+### Point de vigilance pour la suite
+
+Les liens directs depuis le tableau de bord (KPI "Prêts en attente", KPI
+"Listes") ouvrent toujours `renderPretsMembres()`/`renderListes()`
+directement sans passer par le hub — comportement identique à avant (ils
+ne passaient pas non plus par Plus). Leur bouton retour ramène maintenant
+vers Finance/Activités au lieu de l'ancien Plus, ce qui est plus cohérent
+qu'avant mais ne revient toujours pas exactement sur Accueil. Comportement
+pré-existant, non aggravé par cette phase — à reconsidérer si la Phase D
+(dashboard) change ces liens.
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase B (navigation + layout + sidebar desktop) démarre immédiatement à la
-suite de ce rapport, dans la continuité de la même session de travail.
+Phase C (composants réutilisables) démarre immédiatement à la suite de ce
+rapport, dans la continuité de la même session de travail.
