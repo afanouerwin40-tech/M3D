@@ -506,7 +506,61 @@ desktop (seule une liste mobile existait, simplement étirée en grand
 
 ---
 
+## Phase F — Dimanche / Cotisations
+
+### Constat de départ
+
+Comme pour Membres, l'écran de collecte réel (`openWeekDetail`, ouvert
+depuis la liste des dimanches) remplissait déjà l'essentiel de la demande :
+sélection du dimanche (liste avant ouverture), membres avec bascule
+payé/non-payé en un seul geste, gestion des prêts entre membres, export
+PDF, archivage — tout dans un seul écran, sans navigation
+supplémentaire. Ce qui manquait précisément, selon le brief ("montant
+payé, montant attendu, **reste**") : le résumé n'affichait qu'une ligne de
+texte ("Total cotisé : X (Y/membre)"), sans nombre de membres ayant payé
+ni montant restant, et sans indicateur visuel de progression.
+
+### Ce qui a changé
+
+Le résumé devient un `.financial-summary` (Phase C) avec une **barre de
+progression** (`.progress-bar`, jusque-là non consommée nulle part) :
+
+- Montant collecté en gros, avec le montant par membre en sous-titre.
+- Barre de progression = collecté / attendu.
+- Ligne "X/N membres ont payé" à gauche, "Reste F" (ou "Complet") à droite.
+
+Ce résumé se **met à jour en direct** à chaque bascule de paiement, sans
+recharger tout l'écran (la fonction `refreshWeekRows()` existante a été
+étendue pour recalculer et mettre à jour ces 4 éléments, exactement comme
+elle mettait déjà à jour le total avant cette phase).
+
+### Fichiers modifiés
+
+`js/app.js` (`openWeekDetail`, `refreshWeekRows`). `sw.js` (cache `v24` →
+`v25`). **`js/db.js` : toujours aucune ligne modifiée** — `montant_attendu`
+et `montant_paye` viennent des mêmes enregistrements `paiements` qu'avant ;
+seul le calcul d'affichage (déjà fait côté frontend) est enrichi.
+
+### Ce qui n'a délibérément pas changé
+
+- La liste des dimanches (`renderDimanche`/`renderDimancheList`) : déjà
+  simple, avec recherche et filtre Actifs/Archives fonctionnels — non
+  retouchée.
+- Le geste de bascule paiement (un tap sur le nom) : déjà optimal pour un
+  usage répété au téléphone, non modifié.
+- La logique de prêt entre membres (`openPretPicker`) : inchangée.
+
+### Vérifications effectuées
+
+- Tous les `id` déclarés dans `openWeekDetail` reconfrontés à ceux
+  interrogés par `querySelector` dans la même fonction (y compris après
+  bascule de paiement) : aucun manquant.
+- CSS et JS (acorn ES2019) revalidés : tout passe.
+- `js/db.js` confirmé identique caractère pour caractère.
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase F (Dimanche/Cotisations) démarre immédiatement à la suite de ce
+Phase G (Dettes + Caisse + Prêts) démarre immédiatement à la suite de ce
 rapport, dans la continuité de la même session de travail.

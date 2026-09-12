@@ -1395,7 +1395,11 @@ async function openWeekDetail(dimId) {
   const montantAttendu = paiements[0] ? paiements[0].montant_attendu : 0;
 
   const triParNom = (a, b) => fullName(memById[a.id_membre] || {}).localeCompare(fullName(memById[b.id_membre] || {}));
-  const totalId = "wd_total_" + dimId;
+
+  const nbPayes = paiements.filter((p) => p.a_paye).length;
+  const totalAttendu = montantAttendu * paiements.length;
+  const reste = Math.max(0, totalAttendu - total);
+  const pct = totalAttendu > 0 ? Math.min(100, Math.round((total / totalAttendu) * 100)) : 0;
 
   const ov = openSheet(`
     <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
@@ -1404,7 +1408,19 @@ async function openWeekDetail(dimId) {
       <label for="wd_date">Date du dimanche</label>
       <input type="date" id="wd_date" value="${dim.date}">
     </div>
-    <div class="small-note" style="margin-bottom:8px;" id="${totalId}">Total cotise : <b>${fmt(total)}</b> (${fmt(montantAttendu)}/membre)</div>
+    <div class="financial-summary" style="margin-bottom:14px;">
+      <div class="financial-summary-total">
+        <div class="label">Collecte du jour (${fmt(montantAttendu)}/membre)</div>
+        <div class="value positive" id="wd_total_value">${fmt(total)}</div>
+      </div>
+      <div style="padding:0 16px 14px;">
+        <div class="progress-bar" style="margin-bottom:8px;"><div class="progress-bar-fill" id="wd_progress_fill" style="width:${pct}%;"></div></div>
+        <div class="detail-row" style="border:none;padding:0;">
+          <span class="k" id="wd_payes_count">${nbPayes}/${paiements.length} membres ont paye</span>
+          <span class="v" style="color:var(--warning);" id="wd_reste_value">${reste > 0 ? `Reste ${fmt(reste)}` : "Complet"}</span>
+        </div>
+      </div>
+    </div>
     <div id="wd_rows">${paiements.slice().sort(triParNom).map((p) => paiementRowHTML(p, memById, preteurParPaiement)).join("")}</div>
     <div class="sheet-actions">
       <button class="btn btn-ghost" id="wd_export" style="margin-bottom:8px;">Exporter cette cotisation (PDF)</button>
@@ -1465,8 +1481,19 @@ async function openWeekDetail(dimId) {
     rowsBox.innerHTML = freshPaiements.slice().sort(triParNom).map((p) => paiementRowHTML(p, memById, preteurParPaiement)).join("");
 
     const newTotal = freshPaiements.reduce((a, p) => a + p.montant_paye, 0);
-    const totalEl = ov.querySelector("#" + totalId + " b");
+    const newNbPayes = freshPaiements.filter((p) => p.a_paye).length;
+    const newTotalAttendu = montantAttendu * freshPaiements.length;
+    const newReste = Math.max(0, newTotalAttendu - newTotal);
+    const newPct = newTotalAttendu > 0 ? Math.min(100, Math.round((newTotal / newTotalAttendu) * 100)) : 0;
+
+    const totalEl = ov.querySelector("#wd_total_value");
     if (totalEl) totalEl.textContent = fmt(newTotal);
+    const fillEl = ov.querySelector("#wd_progress_fill");
+    if (fillEl) /** @type {HTMLElement} */ (fillEl).style.width = newPct + "%";
+    const countEl = ov.querySelector("#wd_payes_count");
+    if (countEl) countEl.textContent = `${newNbPayes}/${freshPaiements.length} membres ont paye`;
+    const resteEl = ov.querySelector("#wd_reste_value");
+    if (resteEl) resteEl.textContent = newReste > 0 ? `Reste ${fmt(newReste)}` : "Complet";
   }
 
   function notifyAutresEcrans() {
