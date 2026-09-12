@@ -445,7 +445,68 @@ comme une tuile isolée sans contexte.
 
 ---
 
+## Phase E — Membres
+
+### Constat de départ (plus positif que prévu par l'audit)
+
+En reprenant `renderMembres()`/`renderMemberList()` en détail avant d'y
+toucher, la recherche, les filtres (fonction, mois d'anniversaire, statut)
+et le tri (alphabétique, date d'ajout, fonction) **existaient déjà et
+fonctionnaient correctement**, via `openMemberFiltersSheet()`. Le vrai
+manque, conforme à l'audit, était : aucune disposition tableau pour
+desktop (seule une liste mobile existait, simplement étirée en grand
+écran).
+
+### Ce qui a changé
+
+- **Tableau desktop** : nouveau `data-table-wrap`/`data-table` (composant
+  Phase C, jusque-là non consommé nulle part) affiché à partir de 900px,
+  colonnes Nom / Fonction / Anniversaire / Statut. La liste mobile
+  existante reste strictement inchangée en dessous de 900px. Les deux
+  s'alimentent des **mêmes données déjà filtrées/triées** dans
+  `renderMemberList()` — aucune requête dupliquée, aucun risque de
+  désynchronisation entre les deux vues.
+- Deux nouvelles classes utilitaires **`.mobile-only`/`.desktop-only`**
+  ajoutées à `responsive.css`, sur le même palier (900px) que la sidebar
+  existante — réutilisables pour les prochaines phases qui auront besoin
+  de la même bascule (Activités, Finance).
+- **Fiche membre** (`openMemberDetail`) : les lignes de détail existantes
+  sont désormais regroupées sous deux repères "Informations" et
+  "Finances" (`.text-caption`, composant typographique de la Phase A) —
+  mêmes données, mêmes lignes, juste une lecture plus rapide de ce qui
+  est administratif vs financier.
+
+### Fichiers modifiés
+
+`js/app.js` (`renderMembres`, `renderMemberList`, `openMemberDetail`),
+`css/responsive.css` (`.mobile-only`/`.desktop-only`). `sw.js` (cache
+`v23` → `v24`). **`js/db.js` : toujours aucune ligne modifiée.**
+
+### Ce qui n'a délibérément pas changé
+
+- Aucune nouvelle colonne de tri/filtre : le tableau desktop expose les
+  mêmes critères que la liste mobile, pas plus. Un tri par en-tête de
+  colonne cliquable serait une amélioration naturelle mais non demandée
+  explicitement ici — à envisager en Phase J si souhaité ; le tri/filtre
+  reste accessible via le bouton "Filtrer & trier" existant.
+- La logique de passage Actif/Inactif, l'export PDF individuel et
+  l'historique des cotisations restent identiques, boutons et
+  comportements inchangés.
+
+### Vérifications effectuées
+
+- `getElementById`/`querySelector` de `renderMembres`, `renderMemberList`
+  et `openMemberDetail` confrontés à leurs templates : aucun identifiant
+  manquant (les deux références à `memberList`/`memberTable` signalées
+  par le script de vérification sont normales — posées par la fonction
+  appelante `renderMembres`, lues par `renderMemberList`, comme c'était
+  déjà le cas avant cette phase pour `memberList`).
+- CSS et JS (acorn ES2019) revalidés : tout passe.
+- `js/db.js` confirmé identique caractère pour caractère.
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase E (Membres) démarre immédiatement à la suite de ce rapport, dans la
-continuité de la même session de travail.
+Phase F (Dimanche/Cotisations) démarre immédiatement à la suite de ce
+rapport, dans la continuité de la même session de travail.

@@ -3,6 +3,18 @@
    =================================================================== */
 
 /* ===================================================================
+   UTILITAIRES RESPONSIVE — bascule liste (mobile) / tableau (desktop),
+   même palier que la sidebar ci-dessous (900px).
+   =================================================================== */
+
+.desktop-only { display: none; }
+
+@media (min-width: 900px) {
+  .mobile-only { display: none !important; }
+  .desktop-only { display: block; }
+}
+
+/* ===================================================================
    DISPOSITION DESKTOP & TABLETTE (min-width: 900px)
    Transforme la barre inférieure en barre latérale sticky à gauche
    et affiche le contenu principal sous forme de tableau de bord étendu.

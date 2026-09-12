@@ -822,7 +822,13 @@ async function renderMembres() {
     <div class="row" style="border:none;padding:0 4px 12px;justify-content:flex-start;gap:8px;">
       <button class="btn-chip ${memberFiltersActive() ? "active" : ""}" id="memberFiltersBtn">Filtrer &amp; trier${memberFiltersActive() ? " ●" : ""}</button>
     </div>
-    <div class="card list-card" id="memberList"></div>
+    <div class="card list-card mobile-only" id="memberList"></div>
+    <div class="data-table-wrap data-table--clickable desktop-only" id="memberTableWrap">
+      <table class="data-table">
+        <thead><tr><th>Nom</th><th>Fonction</th><th>Anniversaire</th><th>Statut</th></tr></thead>
+        <tbody id="memberTable"></tbody>
+      </table>
+    </div>
     <div class="fab-zone"><button class="fab" id="addMemberBtn" aria-label="Ajouter un membre"><svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path stroke="currentColor" stroke-width="2" stroke-linecap="round" d="M12 5v14M5 12h14"/></svg></button></div>
   `;
 
@@ -890,6 +896,27 @@ async function renderMemberList() {
   box.querySelectorAll(".row").forEach((el) =>
     el.addEventListener("click", () => openMemberDetail(/** @type {HTMLElement} */ (el).dataset.id)),
   );
+
+  const tableBody = document.getElementById("memberTable");
+  if (tableBody) {
+    tableBody.innerHTML = list.map((m) => {
+      const isIrr = irreguliers.has(m.id);
+      const annivStr = m.jour_anniversaire
+        ? `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`
+        : "Non renseigne";
+      return `
+        <tr data-id="${m.id}">
+          <td><div class="info" style="display:flex;align-items:center;gap:10px;"><div class="avatar" style="width:30px;height:30px;font-size:12px;">${initials(m)}</div><span>${esc(fullName(m))}</span>${isIrr ? ` <span class="badge" style="background:var(--bg-danger);color:var(--danger);">Irregulier</span>` : ""}</div></td>
+          <td>${esc(m.fonction || "Membre")}</td>
+          <td>${annivStr}</td>
+          <td><span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span></td>
+        </tr>`;
+    }).join("") || `<tr><td colspan="4">${emptyHTML("Aucun membre correspondant.")}</td></tr>`;
+
+    tableBody.querySelectorAll("tr[data-id]").forEach((el) =>
+      el.addEventListener("click", () => openMemberDetail(/** @type {HTMLElement} */ (el).dataset.id)),
+    );
+  }
 }
 
 /**
@@ -965,12 +992,15 @@ async function openMemberDetail(id) {
         <div class="meta">${esc(m.fonction || "Membre")} &middot; <span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span></div>
       </div>
     </div>
+    <div class="text-caption" style="color:var(--text-muted);margin:14px 0 4px;">Informations</div>
     <div class="detail-row"><span class="k">Telephone</span><span class="v">${esc(m.telephone || "Non renseigne")}</span></div>
     <div class="detail-row"><span class="k">Anniversaire</span><span class="v">${annivStr}</span></div>
-    <div class="detail-row"><span class="k">Cotisation personnalisee</span><span class="v">${m.cotisation_personnalisee ? fmt(m.cotisation_personnalisee) + " / sem." : "Montant par defaut"}</span></div>
     <div class="detail-row"><span class="k">Date d'adhesion</span><span class="v">${m.date_adhesion ? fmtDate(m.date_adhesion) : "Inconnue"}</span></div>
-    <div class="detail-row"><span class="k">Dettes en cours</span><span class="v" style="color:${totalDette ? "var(--danger)" : "var(--success)"};">${fmt(totalDette)}</span></div>
     ${m.observations ? `<div class="detail-row"><span class="k">Observations</span><span class="v">${esc(m.observations)}</span></div>` : ""}
+
+    <div class="text-caption" style="color:var(--text-muted);margin:14px 0 4px;">Finances</div>
+    <div class="detail-row"><span class="k">Cotisation personnalisee</span><span class="v">${m.cotisation_personnalisee ? fmt(m.cotisation_personnalisee) + " / sem." : "Montant par defaut"}</span></div>
+    <div class="detail-row"><span class="k">Dettes en cours</span><span class="v" style="color:${totalDette ? "var(--danger)" : "var(--success)"};">${fmt(totalDette)}</span></div>
 
     <div class="sheet-actions">
       <button class="btn btn-primary" id="editMemberBtn" style="margin-bottom:8px;">Modifier</button>

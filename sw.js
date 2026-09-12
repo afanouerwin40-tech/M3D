@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v23"; // v23 : Refonte UI/UX Phase D — dashboard hierarchise (Aujourd'hui, Finance, Activite, Membres, Statistiques)
+const CACHE_NAME = "m3d-cache-v24"; // v24 : Refonte UI/UX Phase E — Membres (tableau desktop, fiche regroupee)
 
 const ASSETS = [
   "./",
