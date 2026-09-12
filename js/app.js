@@ -193,30 +193,38 @@ async function renderAccueil() {
           </div>`
         : ""
     }
-    <div class="kpi-grid">
-      <div class="kpi k-navy"><div class="lbl">Membres</div><div class="val">${membres.length}</div></div>
-      <div class="kpi k-blue"><div class="lbl">Cotisants</div><div class="val">${participantsCount}</div></div>
-      <div class="kpi k-purple"><div class="lbl">Dimanches</div><div class="val">${joursStats.length}</div></div>
-      <div class="kpi k-teal"><div class="lbl">Solde</div><div class="val" style="font-size:14.5px;">${fmt(solde)}</div></div>
-      <div class="kpi k-green"><div class="lbl">Recettes mois</div><div class="val" style="font-size:14.5px;">${fmt(fluxMois.recettesMois)}</div></div>
-      <div class="kpi k-red"><div class="lbl">Depenses mois</div><div class="val" style="font-size:14.5px;">${fmt(fluxMois.depensesMois)}</div></div>
-      <div class="kpi k-red"><div class="lbl">Dettes</div><div class="val" style="font-size:14.5px;">${fmt(dettesTotal)}</div></div>
-      <div class="kpi k-purple clickable" id="kpiListes"><div class="lbl">Listes</div><div class="val">${listes.length}</div></div>
-      <div class="kpi k-red clickable" id="kpiIrreguliers"><div class="lbl">Irreguliers</div><div class="val">${irreguliersIds.length}</div></div>
-      <div class="kpi k-amber clickable" id="kpiPrets"><div class="lbl">Prets attente</div><div class="val">${pretsEnAttente.length}</div></div>
-      <div class="kpi k-navy clickable" id="kpiRelancer"><div class="lbl">A relancer</div><div class="val">${aRelancer.length}</div></div>
+    <div class="section-title" style="margin-top:0;"><h2>Aujourd'hui</h2></div>
+    <div class="card list-card" id="aujourdhuiBox" style="margin-bottom:22px;"></div>
+
+    <div class="section-title"><h2>Situation financiere</h2></div>
+    <div class="financial-summary financial-summary--clickable" id="financeSummaryBox">
+      <div class="financial-summary-total">
+        <div class="label">Solde de la caisse</div>
+        <div class="value ${solde >= 0 ? "positive" : "negative"}">${fmt(solde)}</div>
+      </div>
+      <div class="financial-summary-rows">
+        <div class="detail-row"><span class="k">Recettes du mois</span><span class="v" style="color:var(--success);">+ ${fmt(fluxMois.recettesMois)}</span></div>
+        <div class="detail-row"><span class="k">Depenses du mois</span><span class="v" style="color:var(--danger);">− ${fmt(fluxMois.depensesMois)}</span></div>
+        <div class="detail-row"><span class="k" style="color:var(--warning);">Dettes impayees</span><span class="v" style="color:var(--warning);">${fmt(dettesTotal)}</span></div>
+      </div>
     </div>
 
-    <div class="section-title"><h2>Prochaines activites</h2></div>
+    <div class="section-title"><h2>Activite</h2><button class="link" id="kpiListes">${listes.length} liste${listes.length > 1 ? "s" : ""}</button></div>
     <div class="card list-card" id="prochainesActsBox" style="margin-bottom:22px;"></div>
 
-    <div class="section-title"><h2>Anniversaires de ${MOIS_NOMS[mois - 1]}</h2></div>
-    <div class="card list-card" id="moisBox" style="margin-bottom:8px;"></div>
-    <div class="small-note" style="margin-bottom:22px;"></div>
+    <div class="section-title"><h2>Membres</h2></div>
+    <div class="stat-card-grid" style="margin-bottom:18px;">
+      <div class="stat-card"><div class="stat-card-body"><div class="stat-card-label">Membres</div><div class="stat-card-value">${membres.length}</div></div></div>
+      <div class="stat-card"><div class="stat-card-body"><div class="stat-card-label">Cotisants</div><div class="stat-card-value">${participantsCount}</div></div></div>
+    </div>
 
-    <div class="section-title" style="margin-top:8px;"><h2>Prochains anniversaires</h2></div>
+    <div class="section-title" style="margin-top:0;"><h2>Anniversaires de ${MOIS_NOMS[mois - 1]}</h2></div>
+    <div class="card list-card" id="moisBox" style="margin-bottom:22px;"></div>
+
+    <div class="section-title"><h2>Prochains anniversaires</h2></div>
     <div class="card list-card" id="prochainsBox" style="margin-bottom:22px;"></div>
 
+    <div class="section-title"><h2>Statistiques</h2></div>
     <div class="charts-grid">
       <div class="card chart-card">
         <div class="chart-title">Evolution de la caisse</div>
@@ -237,20 +245,67 @@ async function renderAccueil() {
       </div>
     </div>
 
-    <div class="section-title"><h2>Recapitulatif des dernieres collectes</h2></div>
+    <div class="section-title"><h2>Recapitulatif des dernieres collectes</h2><span class="page-subtitle">${joursStats.length} dimanche${joursStats.length > 1 ? "s" : ""}</span></div>
     <div id="dash-weeks"></div>
   `;
 
-  // Branchement des clics sur les KPI interactifs
+  // "Aujourd'hui" : liste d'actions prioritaires, construite dynamiquement
+  // (une ligne par sujet qui demande reellement une action, rien si tout est a jour)
+  const aujourdhuiItems = [];
+  if (irreguliersIds.length > 0) {
+    aujourdhuiItems.push({
+      id: "auj-irreguliers",
+      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4M12 16h.01"/></svg>`,
+      bg: "var(--bg-danger)",
+      color: "var(--danger)",
+      label: `${irreguliersIds.length} membre${irreguliersIds.length > 1 ? "s" : ""} irregulier${irreguliersIds.length > 1 ? "s" : ""}`,
+      meta: "Cotisation manquee au moins 2 fois",
+      onClick: () => openARelancerSheet(aRelancer.filter((x) => x.irregulier)),
+    });
+  }
+  if (aRelancer.length > 0) {
+    aujourdhuiItems.push({
+      id: "auj-relancer",
+      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2"/></svg>`,
+      bg: "var(--bg-warning)",
+      color: "var(--warning)",
+      label: `${aRelancer.length} membre${aRelancer.length > 1 ? "s" : ""} a relancer`,
+      meta: "Absents ou en retard de cotisation",
+      onClick: () => openARelancerSheet(aRelancer),
+    });
+  }
+  if (pretsEnAttente.length > 0) {
+    aujourdhuiItems.push({
+      id: "auj-prets",
+      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2M9 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H11a2 2 0 0 0-2 2v9Z"/></svg>`,
+      bg: "var(--bg-warning)",
+      color: "var(--warning)",
+      label: `${pretsEnAttente.length} pret${pretsEnAttente.length > 1 ? "s" : ""} en attente`,
+      meta: "Remboursement entre membres a suivre",
+      onClick: () => renderPretsMembres(),
+    });
+  }
+
+  document.getElementById("aujourdhuiBox").innerHTML = aujourdhuiItems.length
+    ? aujourdhuiItems.map((it) => `
+        <div class="row" data-auj-id="${it.id}">
+          <div class="avatar" style="background:${it.bg};color:${it.color};">${it.icon}</div>
+          <div class="info"><div class="name">${it.label}</div><div class="meta">${it.meta}</div></div>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
+        </div>`).join("")
+    : `<div class="row"><div class="avatar" style="background:var(--bg-success);color:var(--success);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="m9 12 2 2 4-4"/></svg></div><div class="info"><div class="name">Rien ne demande votre attention</div><div class="meta">Tout est a jour</div></div></div>`;
+
+  aujourdhuiItems.forEach((it) => {
+    const row = document.querySelector(`[data-auj-id="${it.id}"]`);
+    if (row) row.addEventListener("click", it.onClick);
+  });
+
+  document.getElementById("financeSummaryBox").addEventListener("click", () => showTab("finance"));
+
+  // Branchement des clics sur les éléments interactifs restants
   document.getElementById("kpiListes").addEventListener("click", () => renderListes());
   const backupWarnBox = document.getElementById("backupWarnBox");
   if (backupWarnBox) backupWarnBox.addEventListener("click", () => openSysteme());
-
-  document.getElementById("kpiIrreguliers").addEventListener("click", () => {
-    openARelancerSheet(aRelancer.filter((x) => x.irregulier));
-  });
-  document.getElementById("kpiPrets").addEventListener("click", () => renderPretsMembres());
-  document.getElementById("kpiRelancer").addEventListener("click", () => openARelancerSheet(aRelancer));
 
   // Initialisation sécurisée de la barre de recherche globale
   wireGlobalSearch();

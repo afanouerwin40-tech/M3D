@@ -363,7 +363,89 @@ alert--clickable">`. Même `id="backupWarnBox"`, même comportement de clic
 
 ---
 
+## Phase D — Dashboard
+
+### Ce qui a changé et pourquoi
+
+L'ancien Accueil empilait une grille de 11 KPI de poids visuel identique
+(Membres, Cotisants, Dimanches, Solde, Recettes mois, Depenses mois,
+Dettes, Listes, Irréguliers, Prêts attente, À relancer), sans hiérarchie —
+voir `UI-UX-AUDIT.md` section 6. Nouvelle organisation en 5 niveaux,
+chacun avec le traitement visuel qui correspond à son importance réelle :
+
+1. **Aujourd'hui** — ce qui demande une action, et seulement ça. Construit
+   dynamiquement : une ligne par sujet réellement en attente (membres
+   irréguliers, à relancer, prêts en attente), et **rien de superflu** si
+   tout est à jour (un seul message rassurant plutôt que 3 lignes à zéro).
+   L'alerte de sauvegarde (déjà un composant Alert depuis la Phase C) reste
+   au-dessus, dans la même logique.
+2. **Situation financière** — remplace 4 tuiles KPI (Solde, Recettes mois,
+   Depenses mois, Dettes) par **un seul composant FinancialSummary** :
+   solde en gros au centre, le reste en lignes de détail. Toute la carte
+   est cliquable et renvoie vers l'onglet Finance (Phase B).
+3. **Activité** — la liste "Prochaines activités" ne change pas de
+   contenu ; le compteur "Listes" (ancienne tuile KPI) devient un lien
+   discret à côté du titre de section plutôt qu'une tuile à part.
+4. **Membres** — Membres et Cotisants passent en StatCard (deux chiffres
+   qui méritent d'être vus, mais qui ne demandent aucune action), suivis
+   des deux listes d'anniversaires, inchangées.
+5. **Statistiques** — les 4 graphiques Canvas et le récapitulatif des
+   dernières collectes, explicitement regroupés sous un même intitulé
+   "Statistiques" en toute fin de page : la donnée la moins actionnable
+   passe en dernier, comme demandé.
+
+Le compteur "Dimanches" (ancienne tuile KPI) n'a pas disparu : il est
+maintenant affiché en petite légende à côté du titre "Récapitulatif des
+dernières collectes", au plus près de la donnée qu'il décrit plutôt que
+comme une tuile isolée sans contexte.
+
+### Fichiers modifiés
+
+`js/app.js` (`renderAccueil` restructurée), `css/components.css`
+(`.stat-card-grid`, `.financial-summary--clickable` — 2 petits ajouts liés
+à cette mise en page). `sw.js` (cache `v22` → `v23`).
+**`js/db.js` : toujours aucune ligne modifiée.**
+
+### Ce qui n'a délibérément pas changé
+
+- **Aucune requête ni calcul modifié.** Toutes les valeurs affichées
+  viennent exactement des mêmes fonctions `db.js` qu'avant
+  (`caisseSolde()`, `totalDettesImpayees()`, `fluxCaisseMoisCourant()`,
+  `membresIrreguliers()`, `membresARelancer()`, `pretsMembres()`,
+  `prochainesActivites()`, etc.) — seule la présentation change.
+- Les 4 graphiques Canvas gardent exactement les mêmes fonctions de
+  dessin (`drawCaisseChart`, `drawMonthBarChart`, `drawDonutChart`,
+  `drawDepensesCategorieChart`), les mêmes ids de `<canvas>`, aucune
+  modification.
+- La bannière de bienvenue "0 membre" et le chargement des données de
+  démo depuis l'Accueil restent identiques.
+- Les classes `.kpi`/`.kpi-grid`/`.k-navy`/`.k-blue`/etc. ne sont plus
+  utilisées nulle part dans le projet après cette phase (elles ne
+  servaient qu'à l'ancien Accueil) mais **n'ont pas été supprimées** de
+  `components.css` : les retirer n'apporte aucun bénéfice de risque et
+  elles pourraient resservir pour une grille dense ailleurs. Décision à
+  reconsidérer en Phase J si elles restent inutilisées.
+- Je n'ai pas ajouté de métrique "nouveaux membres" pourtant suggérée en
+  exemple dans le brief : aucune donnée existante ne permet de la calculer
+  aujourd'hui, et en créer une aurait nécessité une nouvelle requête sur
+  `db.js` — hors du périmètre "UI uniquement" fixé pour cette refonte.
+
+### Vérifications effectuées
+
+- `getElementById(...)` de `renderAccueil` reconfronté à son template
+  après la réécriture complète : aucun identifiant manquant (liste
+  complète relue : `aujourdhuiBox`, `financeSummaryBox`, `kpiListes`,
+  `backupWarnBox`, `moisBox`, `prochainesActsBox`, `prochainsBox`,
+  `accueilLoadDemoBtn`, 4 canvas de graphique, tous présents).
+- Les 6 fichiers `.css` et les 6 fichiers `.js` (`acorn` `ecmaVersion:
+  2019`) revalidés après la modification : tout passe.
+- Comparaison avec le zip original : en plus des fichiers des Phases A/B/C,
+  aucun fichier supplémentaire touché ; `js/db.js` toujours identique
+  caractère pour caractère.
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase D (dashboard) démarre immédiatement à la suite de ce rapport, dans
-la continuité de la même session de travail.
+Phase E (Membres) démarre immédiatement à la suite de ce rapport, dans la
+continuité de la même session de travail.

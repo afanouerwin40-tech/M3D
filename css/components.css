@@ -242,6 +242,12 @@
   transform: scale(0.98);
 }
 
+.stat-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
 /* ===================================================================
    FINANCIAL SUMMARY — solde/synthèse financière mise en avant.
    Les lignes de détail réutilisent .detail-row/.k/.v (déjà établis) :
@@ -284,6 +290,15 @@
 
 .financial-summary-rows .detail-row .v {
   font-variant-numeric: tabular-nums;
+}
+
+.financial-summary--clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.financial-summary--clickable:active {
+  transform: scale(0.99);
 }
 
 /* ===================================================================
