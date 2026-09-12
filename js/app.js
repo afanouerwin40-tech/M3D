@@ -282,7 +282,7 @@ async function renderAccueil() {
       color: "var(--warning)",
       label: `${pretsEnAttente.length} pret${pretsEnAttente.length > 1 ? "s" : ""} en attente`,
       meta: "Remboursement entre membres a suivre",
-      onClick: () => renderPretsMembres(),
+      onClick: () => { financeVue = "prets"; showTab("finance"); },
     });
   }
 
@@ -1500,7 +1500,7 @@ async function openWeekDetail(dimId) {
     const current = getCurrentTab();
     if (current === "accueil") renderAccueil();
     else if (current === "dimanche") renderDimanche();
-    else if (current === "dettes") renderDettes();
+    else if (current === "finance") renderFinance();
   }
 
   function openPretPicker(idPaiement) {
@@ -1561,14 +1561,21 @@ async function openWeekDetail(dimId) {
 /**
  * Rendu principal de l'onglet Dettes.
  */
-async function renderDettes() {
+/**
+ * Rendu de la sous-vue Dettes, intégrée au hub Finance (voir renderFinance).
+ *
+ * @param {HTMLElement} [container] - Élément cible ; par défaut #financeBody.
+ */
+async function renderDettes(container) {
+  const el = container || document.getElementById("financeBody");
+  if (!el) return;
+
   const dettes = await dettesList();
   const impayees = dettes.filter((d) => d.statut === "Impayee");
   const remboursees = dettes.filter((d) => d.statut === "Remboursee");
   const total = impayees.reduce((a, d) => a + d.montant, 0);
 
-  app.innerHTML = `
-    <button class="btn-chip" id="dettesBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
+  el.innerHTML = `
     <div class="card" style="text-align:center;padding:20px;margin-bottom:18px;">
       <div class="small-note">Total impaye</div>
       <div style="font-family:var(--font-sans);font-size:28px;font-weight:700;color:var(--danger);margin-top:2px;">${fmt(total)}</div>
@@ -1577,8 +1584,6 @@ async function renderDettes() {
     <div class="card list-card" id="dettesImpayees"></div>
     ${remboursees.length ? `<div class="section-title"><h2>Remboursees (${remboursees.length})</h2></div><div class="card list-card" id="dettesRemb"></div>` : ""}
   `;
-
-  document.getElementById("dettesBackBtn").addEventListener("click", () => showTab("finance"));
 
   const rowHTML = (d, actionable) => `
     <div class="row" ${actionable ? `data-paiement="${d.id_paiement}"` : ""}>
@@ -1590,8 +1595,8 @@ async function renderDettes() {
   document.getElementById("dettesImpayees").innerHTML =
     impayees.map((d) => rowHTML(d, true)).join("") || emptyHTML("Aucune dette en cours.");
 
-  document.querySelectorAll("#dettesImpayees .row").forEach((el) =>
-    el.addEventListener("click", () => openRembourser(/** @type {HTMLElement} */ (el).dataset.paiement)),
+  document.querySelectorAll("#dettesImpayees .row").forEach((row) =>
+    row.addEventListener("click", () => openRembourser(/** @type {HTMLElement} */ (row).dataset.paiement)),
   );
 
   if (remboursees.length) {
@@ -1656,10 +1661,16 @@ function openRembourser(idPaiement) {
 /**
  * Rendu de la vue de gestion des prêts entre membres.
  */
-async function renderPretsMembres() {
-  app.innerHTML = `
-    <button class="btn-chip" id="pretsBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
-    <div class="section-title" style="margin-top:0;"><h2>Prets entre membres</h2></div>
+/**
+ * Rendu de la sous-vue Prêts entre membres, intégrée au hub Finance.
+ *
+ * @param {HTMLElement} [container] - Élément cible ; par défaut #financeBody.
+ */
+async function renderPretsMembres(container) {
+  const el = container || document.getElementById("financeBody");
+  if (!el) return;
+
+  el.innerHTML = `
     <div class="small-note" style="margin-bottom:12px;">Quand un membre absent se fait avancer sa cotisation par un autre, le groupe est deja regle. C'est ici que s'organisent les remboursements entre membres.</div>
     <div class="row" style="border:none;padding:0 4px 12px;justify-content:flex-start;gap:8px;">
       <button class="btn-chip ${!pretsShowRembourses ? "active" : ""}" id="prets_filtre_attente">En attente</button>
@@ -1669,14 +1680,13 @@ async function renderPretsMembres() {
     <div id="pretsBox"></div>
   `;
 
-  document.getElementById("pretsBackBtn").addEventListener("click", () => showTab("finance"));
   document.getElementById("prets_filtre_attente").addEventListener("click", () => {
     pretsShowRembourses = false;
-    renderPretsMembres();
+    renderPretsMembres(el);
   });
   document.getElementById("prets_filtre_rembourses").addEventListener("click", () => {
     pretsShowRembourses = true;
-    renderPretsMembres();
+    renderPretsMembres(el);
   });
   document.getElementById("pretsExportBtn").addEventListener("click", exportPretsMembresPDF);
 
@@ -1706,7 +1716,7 @@ async function renderPretsMembres() {
       const pret = prets.find((p) => p.id === id);
       await marquerPretRembourse(id, !pret.rembourse);
       toast(pret.rembourse ? "Marque non rembourse" : "Marque rembourse");
-      renderPretsMembres();
+      renderPretsMembres(el);
     }),
   );
 }
@@ -2601,66 +2611,69 @@ function wireEvenementsClick(root) {
  * ici — le contenu de chaque destination reste celui d'avant la refonte ;
  * leur présentation commune sera revue en Phase G.
  */
+/**
+ * Sous-vue actuellement affichée dans le hub Finance ("caisse"/"dettes"/"prets").
+ */
+let financeVue = "caisse";
+
+/**
+ * Onglet Finance : regroupe Caisse, Dettes et Prêts entre membres dans un
+ * seul écran, avec une navigation Segmented (Phase C) entre les trois —
+ * plus besoin d'ouvrir un écran séparé ni de revenir en arrière pour
+ * passer de l'un à l'autre (voir docs/UI-UX-REFACTOR-REPORT.md, Phase G).
+ */
 async function renderFinance() {
-  const cd = await caisseDetail();
   const dettesTotal = await totalDettesImpayees();
   const pretsEnAttente = (await pretsMembres({ nonRembourseSeulement: true })).length;
 
   app.innerHTML = `
     <div class="section-title" style="margin-top:0;"><h2>Finance</h2></div>
-    <div class="card list-card" id="financeCaisseBox" style="margin-bottom:12px;cursor:pointer;">
-      <div class="row" style="border:none;padding:2px 4px;">
-        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2"/><path stroke-linecap="round" d="M6 12h.01M18 12h.01"/></svg></span>
-        <div class="info"><div class="name">Caisse</div><div class="meta">Solde actuel : ${fmt(cd.solde)}</div></div>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
-      </div>
+    <div class="segmented" style="margin-bottom:16px;">
+      <button class="btn-chip ${financeVue === "caisse" ? "active" : ""}" id="financeSegCaisse">Caisse</button>
+      <button class="btn-chip ${financeVue === "dettes" ? "active" : ""}" id="financeSegDettes">Dettes${dettesTotal > 0 ? ` (${fmt(dettesTotal)})` : ""}</button>
+      <button class="btn-chip ${financeVue === "prets" ? "active" : ""}" id="financeSegPrets">Prets${pretsEnAttente > 0 ? ` (${pretsEnAttente})` : ""}</button>
     </div>
-    <div class="card list-card" id="financeDettesBox" style="margin-bottom:12px;cursor:pointer;">
-      <div class="row" style="border:none;padding:2px 4px;">
-        <span class="liste-icon" style="background:var(--bg-danger);color:var(--danger);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4M12 16h.01"/></svg></span>
-        <div class="info"><div class="name">Dettes</div><div class="meta">${dettesTotal > 0 ? `${fmt(dettesTotal)} impayes` : "Aucune dette en cours"}</div></div>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
-      </div>
-    </div>
-    <div class="card list-card" id="financePretsBox" style="margin-bottom:24px;cursor:pointer;">
-      <div class="row" style="border:none;padding:2px 4px;">
-        <span class="liste-icon" style="background:var(--bg-warning);color:var(--warning);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2M9 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H11a2 2 0 0 0-2 2v9Z"/></svg></span>
-        <div class="info"><div class="name">Prets entre membres</div><div class="meta">${pretsEnAttente > 0 ? `${pretsEnAttente} en attente de remboursement` : "Aucun pret en attente"}</div></div>
-        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
-      </div>
-    </div>
+    <div id="financeBody"></div>
   `;
 
-  document.getElementById("financeCaisseBox").addEventListener("click", renderCaisse);
-  document.getElementById("financeDettesBox").addEventListener("click", renderDettes);
-  document.getElementById("financePretsBox").addEventListener("click", renderPretsMembres);
+  document.getElementById("financeSegCaisse").addEventListener("click", () => { financeVue = "caisse"; renderFinance(); });
+  document.getElementById("financeSegDettes").addEventListener("click", () => { financeVue = "dettes"; renderFinance(); });
+  document.getElementById("financeSegPrets").addEventListener("click", () => { financeVue = "prets"; renderFinance(); });
+
+  const body = document.getElementById("financeBody");
+  if (financeVue === "dettes") await renderDettes(body);
+  else if (financeVue === "prets") await renderPretsMembres(body);
+  else await renderCaisse(body);
 }
 
 /**
- * Détail de la Caisse : solde, mouvements, dépenses par catégorie, dettes
- * impayées non incluses, ajout/ajustement manuels. Extrait tel quel de
- * l'ancien onglet "Plus" (Phase B : déplacement de navigation uniquement,
- * aucun changement de contenu ni de logique).
+ * Sous-vue Caisse, intégrée au hub Finance (voir renderFinance) : solde,
+ * mouvements, dépenses par catégorie, dettes non incluses, ajout/
+ * ajustement manuels.
+ *
+ * @param {HTMLElement} [container] - Élément cible ; par défaut #financeBody.
  */
-async function renderCaisse() {
+async function renderCaisse(container) {
+  const el = container || document.getElementById("financeBody");
+  if (!el) return;
+
   const cd = await caisseDetail();
   const manuels = (await db.caisse_mouvements.toArray()).sort((a, b) => b.date.localeCompare(a.date));
   const depensesCat = await depensesParCategorie();
   const totalDepensesCategorisees = Object.values(depensesCat).reduce((a, v) => a + v, 0);
 
-  app.innerHTML = `
-    <button class="btn-chip" id="caisseBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
-    <div class="section-title" style="margin-top:0;"><h2>Caisse</h2></div>
-    <div class="card" style="text-align:center;padding:20px;margin-bottom:14px;">
-      <div class="small-note">Solde actuel</div>
-      <div class="num" style="font-family:var(--font-sans);font-size:28px;font-weight:700;color:var(--success);margin-top:2px;">${fmt(cd.solde)}</div>
-    </div>
-    <div class="card list-card" style="margin-bottom:14px;">
-      <div class="detail-row"><span class="k">Cotisations encaissees</span><span class="v" style="color:var(--success);">+ ${fmt(cd.totalCollecte)}</span></div>
-      <div class="detail-row"><span class="k">Cadeaux d'anniversaire verses</span><span class="v" style="color:var(--danger);">− ${fmt(cd.totalCadeauxVerses)}</span></div>
-      <div class="detail-row"><span class="k">Entrees manuelles</span><span class="v" style="color:var(--success);">+ ${fmt(cd.entreesManuelles)}</span></div>
-      <div class="detail-row"><span class="k">Sorties manuelles</span><span class="v" style="color:var(--danger);">− ${fmt(cd.sortiesManuelles)}</span></div>
-      <div class="detail-row" style="border-top:2px solid var(--border);margin-top:4px;padding-top:12px;"><span class="k" style="font-weight:700;color:var(--text);">= Solde de la caisse</span><span class="v" style="font-size:16px;">${fmt(cd.solde)}</span></div>
+  el.innerHTML = `
+    <div class="financial-summary" style="margin-bottom:14px;">
+      <div class="financial-summary-total">
+        <div class="label">Solde de la caisse</div>
+        <div class="value ${cd.solde >= 0 ? "positive" : "negative"}">${fmt(cd.solde)}</div>
+      </div>
+      <div class="financial-summary-rows">
+        <div class="detail-row"><span class="k">Cotisations encaissees</span><span class="v" style="color:var(--success);">+ ${fmt(cd.totalCollecte)}</span></div>
+        <div class="detail-row"><span class="k">Cadeaux d'anniversaire verses</span><span class="v" style="color:var(--danger);">− ${fmt(cd.totalCadeauxVerses)}</span></div>
+        <div class="detail-row"><span class="k">Entrees manuelles</span><span class="v" style="color:var(--success);">+ ${fmt(cd.entreesManuelles)}</span></div>
+        <div class="detail-row"><span class="k">Sorties manuelles</span><span class="v" style="color:var(--danger);">− ${fmt(cd.sortiesManuelles)}</span></div>
+      </div>
     </div>
     ${
       totalDepensesCategorisees > 0
@@ -2672,16 +2685,16 @@ async function renderCaisse() {
            </div>`
         : ""
     }
-    <div class="card" style="margin-bottom:18px;background:var(--bg-warning);border-color:transparent;">
-      <div class="detail-row" style="border:none;padding:0;"><span class="k" style="color:var(--warning);">Dettes impayees (non incluses ci-dessus)</span><span class="v" style="color:var(--warning);">${fmt(cd.dettesImpayees)}</span></div>
-      <div class="small-note" style="margin-top:6px;">Cet argent n'est pas en caisse : il correspond aux cotisations dues par des membres.</div>
+    <div class="alert alert--warning" style="margin-bottom:18px;">
+      <div class="alert-body">
+        <div class="alert-title">Dettes impayees (non incluses ci-dessus)</div>
+        <div class="small-note" style="margin-top:2px;">${fmt(cd.dettesImpayees)} — cet argent n'est pas en caisse, il correspond aux cotisations dues par des membres.</div>
+      </div>
     </div>
     <button class="btn btn-ghost" id="addMouvBtn" style="margin-bottom:10px;">+ Mouvement manuel (achat, depense...)</button>
     <button class="btn btn-ghost" id="ajusterCaisseBtn" style="margin-bottom:18px;">Ajuster la caisse (montant reel en main)</button>
     <div class="card list-card" id="mouvList" style="margin-bottom:24px;"></div>
   `;
-
-  document.getElementById("caisseBackBtn").addEventListener("click", () => showTab("finance"));
 
   document.getElementById("mouvList").innerHTML =
     manuels.map((m) => `

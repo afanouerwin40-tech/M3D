@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v25"; // v25 : Refonte UI/UX Phase F — Dimanche/Cotisations (resume enrichi avec progression)
+const CACHE_NAME = "m3d-cache-v26"; // v26 : Refonte UI/UX Phase G — Finance unifiee (Caisse/Dettes/Prets en Segmented, sans ecrans separes)
 
 const ASSETS = [
   "./",

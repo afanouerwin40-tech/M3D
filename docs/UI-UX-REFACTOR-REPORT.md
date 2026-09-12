@@ -560,7 +560,76 @@ seul le calcul d'affichage (déjà fait côté frontend) est enrichi.
 
 ---
 
+## Phase G — Dettes + Caisse + Prêts
+
+### Ce qui a changé et pourquoi
+
+C'est la phase annoncée dès la Phase B : le hub Finance passait alors par
+3 cartes-liens ouvrant chacune un écran plein avec son propre bouton
+retour. Il devient maintenant **un seul écran** avec une navigation
+**Segmented** (composant Phase C, jusque-là non consommé) entre Caisse,
+Dettes et Prêts — plus besoin d'aller-retour pour passer de l'un à
+l'autre, conforme à la demande "une vraie place" pour la Caisse et à la
+logique de navigation par domaine déjà adoptée en Phase B.
+
+- `renderFinance()` affiche désormais la Segmented (avec le total impayé
+  et le nombre de prêts en attente directement dans les libellés des
+  segments Dettes/Prêts) et un conteneur `#financeBody`.
+- `renderCaisse()`, `renderDettes()`, `renderPretsMembres()` prennent
+  toutes un paramètre optionnel `container` : rendues dans
+  `#financeBody` quand on est dans le hub, elles retombent automatiquement
+  sur `#financeBody` si appelées sans argument (cas des rafraîchissements
+  internes après une action — aucun de ces appels internes n'a eu besoin
+  d'être modifié). Plus aucune des trois n'a de bouton retour : ce n'est
+  plus un écran séparé, changer de sous-vue est un simple clic de segment.
+- Le résumé de la Caisse passe de 5 lignes de détail plates (dont une
+  ligne "= Solde" redondante avec le total déjà affiché) à un vrai
+  **FinancialSummary** : solde en évidence, lignes de détail en dessous.
+  L'avertissement "Dettes impayées non incluses" devient un composant
+  **Alert** au lieu d'une carte à fond orange bricolée en style inline.
+- Le raccourci "Prêts en attente" de l'Accueil (Phase D) et le
+  rafraîchissement croisé déclenché par un paiement de dimanche
+  (`notifyAutresEcrans`, qui vérifiait encore l'ancien onglet "dettes",
+  retiré depuis la Phase B) pointent maintenant correctement vers Finance.
+
+### Fichiers modifiés
+
+`js/app.js` (`renderFinance`, `renderCaisse`, `renderDettes`,
+`renderPretsMembres`, `renderAccueil` pour le raccourci Prêts,
+`notifyAutresEcrans`). `sw.js` (cache `v25` → `v26`).
+**`js/db.js` : toujours aucune ligne modifiée.**
+
+### Ce qui n'a délibérément pas changé
+
+- Aucune requête ni calcul modifié : `caisseDetail()`, `dettesList()`,
+  `pretsMembres()`, `totalDettesImpayees()` utilisées telles quelles.
+- Le geste de bascule d'un prêt/dette remboursé (un tap) reste identique.
+- Les filtres Prêts (En attente/Remboursés) et l'export PDF restent
+  inchangés dans leur fonctionnement.
+
+### Vérifications effectuées
+
+- Recherche exhaustive des anciens éléments retirés
+  (`financeCaisseBox`/`financeDettesBox`/`financePretsBox`/
+  `caisseBackBtn`/`dettesBackBtn`/`pretsBackBtn`) : plus aucune référence.
+- `getElementById(...)` de chaque fonction Finance reconfronté à son
+  propre template : les seuls "manquants" détectés sont `financeBody`,
+  posé par la fonction parente `renderFinance` et lu par les 3 sous-vues —
+  comportement voulu, déjà utilisé de façon identique pour Membres en
+  Phase E.
+- Les 6 fichiers `.js` revalidés avec `acorn` `ecmaVersion: 2019` : tout
+  passe.
+- `js/db.js` confirmé identique caractère pour caractère.
+- Parcours revérifié manuellement : Accueil → "Prêts en attente" → arrive
+  directement sur Finance avec le segment Prêts sélectionné (avant cette
+  phase : ouvrait un écran séparé) ; toggler un paiement dans un dimanche
+  pendant que Finance est affiché en dessous rafraîchit maintenant
+  correctement le hub (avant : cherchait un onglet "dettes" qui n'existait
+  déjà plus depuis la Phase B, silencieusement sans effet).
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase G (Dettes + Caisse + Prêts) démarre immédiatement à la suite de ce
+Phase H (Activités + Calendrier) démarre immédiatement à la suite de ce
 rapport, dans la continuité de la même session de travail.
