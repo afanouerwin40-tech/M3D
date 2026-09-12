@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v21"; // v21 : Refonte UI/UX Phase B — navigation par domaines (Finance, Activites, Systeme separe)
+const CACHE_NAME = "m3d-cache-v22"; // v22 : Refonte UI/UX Phase C — composants reutilisables (StatCard, FinancialSummary, Alert, ProgressBar, DataTable, Segmented)
 
 const ASSETS = [
   "./",

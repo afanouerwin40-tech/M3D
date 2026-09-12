@@ -171,15 +171,16 @@ async function renderAccueil() {
     </div>
     ${
       sauvegardeAlerte
-        ? `<div class="card" id="backupWarnBox" style="margin-bottom:16px;background:var(--bg-warning);border-color:transparent;cursor:pointer;">
-            <div class="detail-row" style="border:none;padding:0;">
-              <span class="k" style="color:var(--warning);font-weight:600;">${
+        ? `<div class="alert alert--warning alert--clickable" id="backupWarnBox">
+            <svg class="alert-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4M12 17h.01"/><path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+            <div class="alert-body">
+              <div class="alert-title">${
                 derniereSauvegarde
                   ? `Derniere sauvegarde il y a ${joursDepuisSauvegarde} jours`
                   : "Aucune sauvegarde n'a jamais ete faite"
-              }</span>
+              }</div>
+              <div class="small-note" style="margin-top:2px;">Toutes les donnees ne vivent que sur cet appareil. Touche ici pour exporter une sauvegarde JSON.</div>
             </div>
-            <div class="small-note" style="margin-top:4px;">Toutes les donnees ne vivent que sur cet appareil. Touche ici pour exporter une sauvegarde JSON.</div>
           </div>`
         : ""
     }

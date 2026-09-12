@@ -111,6 +111,20 @@
    CARTES
    =================================================================== */
 
+/* ===================================================================
+   CARD — composant de base
+   Base .card : fond, bordure, radius, ombre.
+   Modificateur --list : lignes compactes pour une liste cliquable
+   (ex. lignes de mouvements, membres, activités).
+   Modificateur --interactive : retour tactile au clic (utilisé par les
+   cartes de dimanche, week-card ci-dessous).
+   .list-card et .liste-card restent des alias de .card--list — conservés
+   pour ne pas casser les usages existants (voir
+   docs/UI-UX-REFACTOR-REPORT.md, Phase C : avant cette phase, .list-card,
+   .liste-card et .week-card étaient trois définitions indépendantes et
+   partiellement divergentes du même besoin).
+   =================================================================== */
+
 .card {
   background: var(--surface);
   border-radius: var(--radius-lg);
@@ -119,8 +133,339 @@
   box-shadow: var(--shadow);
 }
 
-.list-card {
+.card--list,
+.list-card,
+.liste-card {
   padding: 4px 12px;
+}
+
+.card--interactive {
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.card--interactive:active {
+  transform: scale(0.99);
+}
+
+/* ===================================================================
+   PAGE HEADER — titre de page (distinct de .section-title, qui reste
+   pour les titres de section à l'intérieur d'une page).
+   =================================================================== */
+
+.page-header {
+  margin-bottom: 18px;
+}
+
+.page-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.page-header h1 {
+  font-size: var(--text-h1);
+  margin: 0 0 2px;
+}
+
+.page-subtitle {
+  font-size: var(--text-body-sm);
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+/* ===================================================================
+   STAT CARD — mise en avant d'un indicateur prioritaire (niveau 1/2
+   de hiérarchie tableau de bord). Distinct de .kpi (tuile carrée dense
+   pour une grille de métriques secondaires) : StatCard est plus large,
+   pensée pour 1 à 3 indicateurs qui demandent une vraie attention.
+   =================================================================== */
+
+.stat-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 16px;
+  box-shadow: var(--shadow);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+.stat-card-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--radius-md);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.stat-card-body {
+  min-width: 0;
+  flex: 1;
+}
+
+.stat-card-label {
+  font-size: var(--text-caption);
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin: 0 0 2px;
+}
+
+.stat-card-value {
+  font-size: var(--text-display);
+  font-weight: 700;
+  line-height: var(--leading-tight);
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.stat-card-trend {
+  font-size: var(--text-caption);
+  font-weight: 600;
+  margin-top: 4px;
+}
+
+.stat-card-trend.up   { color: var(--success); }
+.stat-card-trend.down { color: var(--danger); }
+
+.stat-card--clickable {
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+
+.stat-card--clickable:active {
+  transform: scale(0.98);
+}
+
+/* ===================================================================
+   FINANCIAL SUMMARY — solde/synthèse financière mise en avant.
+   Les lignes de détail réutilisent .detail-row/.k/.v (déjà établis) :
+   ce composant ne fait qu'habiller le total et le conteneur.
+   =================================================================== */
+
+.financial-summary {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  margin-bottom: 14px;
+}
+
+.financial-summary-total {
+  text-align: center;
+  padding: 20px;
+}
+
+.financial-summary-total .label {
+  font-size: var(--text-body-sm);
+  color: var(--text-muted);
+}
+
+.financial-summary-total .value {
+  font-size: var(--text-display);
+  font-weight: 700;
+  margin-top: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.financial-summary-total .value.positive { color: var(--success); }
+.financial-summary-total .value.negative { color: var(--danger); }
+
+.financial-summary-rows {
+  padding: 0 16px 4px;
+  border-top: 1px solid var(--border);
+}
+
+.financial-summary-rows .detail-row .v {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ===================================================================
+   ALERT — bannière persistante (à la différence du Toast, transitoire).
+   Reprend le traitement déjà éprouvé de la bannière de sauvegarde
+   (fond -subtle, sans bordure) et le généralise aux 4 statuts.
+   =================================================================== */
+
+.alert {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  font-size: var(--text-body-sm);
+  color: var(--text);
+  margin-bottom: 14px;
+}
+
+.alert-icon {
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.alert-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.alert-title {
+  font-weight: 700;
+  margin: 0 0 2px;
+}
+
+.alert--info    { background: var(--info-subtle); }
+.alert--info    .alert-icon, .alert--info    .alert-title { color: var(--info); }
+.alert--success { background: var(--success-subtle); }
+.alert--success .alert-icon, .alert--success .alert-title { color: var(--success); }
+.alert--warning { background: var(--warning-subtle); }
+.alert--warning .alert-icon, .alert--warning .alert-title { color: var(--warning); }
+.alert--danger  { background: var(--danger-subtle); }
+.alert--danger  .alert-icon, .alert--danger  .alert-title { color: var(--danger); }
+
+.alert--clickable {
+  cursor: pointer;
+}
+
+/* ===================================================================
+   PROGRESS BAR — progression (ex. taux de paiement d'une activité).
+   =================================================================== */
+
+.progress-bar {
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+.progress-bar-fill.success { background: var(--success); }
+.progress-bar-fill.warning { background: var(--warning); }
+.progress-bar-fill.danger  { background: var(--danger); }
+
+/* ===================================================================
+   DATA TABLE — tableau pour affichage desktop dense (membres, exports).
+   Les tableaux existants du projet servaient uniquement à l'impression
+   PDF ; celui-ci est le premier pensé pour l'écran.
+   =================================================================== */
+
+.data-table-wrap {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow);
+  overflow: hidden;
+  overflow-x: auto;
+}
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-body-sm);
+}
+
+.data-table th {
+  text-align: left;
+  font-size: var(--text-caption);
+  font-weight: 600;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-muted);
+  white-space: nowrap;
+}
+
+.data-table td {
+  padding: 12px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table tbody tr:hover {
+  background: var(--surface-muted);
+}
+
+.data-table--clickable tbody tr {
+  cursor: pointer;
+}
+
+.data-table-wrap .data-table th:first-child,
+.data-table-wrap .data-table td:first-child {
+  padding-left: 16px;
+}
+
+.data-table-wrap .data-table th:last-child,
+.data-table-wrap .data-table td:last-child {
+  padding-right: 16px;
+}
+
+/* ===================================================================
+   SEGMENTED — bascule entre vues mutuellement exclusives (ex. futur
+   sous-menu Finance : Caisse | Dettes | Prêts, Phase G). Réutilise le
+   composant .btn-chip existant (déjà utilisé pour Mois/Agenda dans le
+   Calendrier et pour les filtres Prêts) sur une piste neutre plutôt
+   que la couleur d'accent — pour distinguer visuellement "basculer de
+   vue" (Segmented) et "filtrer" (Chip seul, fond accent quand actif).
+   =================================================================== */
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  background: var(--surface-muted);
+  border-radius: var(--radius-full);
+  gap: 2px;
+}
+
+.segmented .btn-chip {
+  border: none;
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.segmented .btn-chip.active {
+  background: var(--surface);
+  color: var(--text);
+  box-shadow: var(--shadow-sm);
+}
+
+/* ===================================================================
+   EMPTY STATE — extension optionnelle de .empty (icône/titre/action).
+   emptyHTML() texte seul reste 100% compatible : ces classes ne
+   s'appliquent que si un appelant compose un état vide plus riche.
+   =================================================================== */
+
+.empty-icon {
+  width: 44px;
+  height: 44px;
+  margin: 0 auto 12px;
+  color: var(--text-muted);
+  opacity: 0.6;
+}
+
+.empty-title {
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.empty-action {
+  margin-top: 14px;
 }
 
 /* ===================================================================
@@ -251,6 +596,13 @@
   color: var(--text-3);
 }
 
+/* ===================================================================
+   BADGE — statut (payé/non payé/partiel/surpayé/info/danger).
+   Coin arrondi léger (--radius-sm) : à distinguer de Tag (pilule
+   --radius-full, ci-dessous) et de Chip/.btn-chip (bascule de filtre
+   ou de vue, voir section CHIPS & ACTIONS et composant Segmented).
+   =================================================================== */
+
 .badge {
   font-size: 11.5px;
   font-weight: 600;
@@ -325,6 +677,15 @@
   padding: 6px 4px 6px 10px;
   flex-shrink: 0;
 }
+
+/* ===================================================================
+   CHIP / FILTER BUTTON — .btn-chip sert déjà ce rôle (bascule active/
+   inactive, fond accent quand actif) : utilisé pour les filtres
+   (Prêts : "En attente"/"Rembourses") et les bascules de vue
+   (Calendrier : Mois/Agenda). Regroupé dans .segmented (voir plus
+   haut) quand la bascule remplace tout le contenu affiché plutôt que
+   de filtrer une liste existante.
+   =================================================================== */
 
 .btn-chip {
   border: 1px solid var(--border);
@@ -413,12 +774,15 @@
 
 /* ===================================================================
    CARTES DE DIMANCHES & TAGS
+   week-card = .card + .card--interactive (voir composant Card plus haut).
+   Alias autonome conservé car utilisé seul dans le HTML (pas combiné à
+   la classe .card), à la différence de .list-card/.liste-card.
    =================================================================== */
 
 .week-card {
   background: var(--surface);
   border: 1px solid var(--border);
-  border-radius: 14px;
+  border-radius: var(--radius-lg);
   padding: 14px 16px;
   margin-bottom: 10px;
   cursor: pointer;
@@ -459,6 +823,12 @@
   margin-top: 8px;
   flex-wrap: wrap;
 }
+
+/* ===================================================================
+   TAG — petite étiquette non interactive (ex. "surplus"/"manque" sur
+   une carte de dimanche). Pilule comme Chip, mais jamais cliquable ni
+   togglable — à la différence de .btn-chip.
+   =================================================================== */
 
 .tag {
   font-size: 11.5px;

@@ -255,7 +255,115 @@ pré-existant, non aggravé par cette phase — à reconsidérer si la Phase D
 
 ---
 
+## Phase C — Composants réutilisables
+
+### Principe suivi
+
+Avant d'ajouter quoi que ce soit, chaque élément de la liste demandée a été
+confronté à l'existant (voir `UI-UX-AUDIT.md` section 7) : plusieurs
+composants existaient déjà et fonctionnaient bien, ils ont seulement été
+**documentés** comme tels plutôt que dupliqués :
+
+- **Chip / FilterButton** : `.btn-chip` + `.active` faisait déjà ce travail
+  (filtres Prêts, bascule Mois/Agenda du Calendrier) — non recréé.
+- **Badge** vs **Tag** : deux pilules déjà distinctes (coin légèrement
+  arrondi et statut pour Badge, pilule complète et non-interactive pour
+  Tag) — non fusionnées, juste commentées pour clarifier quand utiliser
+  laquelle.
+- **SectionHeader** : `.section-title` remplissait déjà ce rôle.
+- **Détail clé/valeur** : `.detail-row`/`.k`/`.v` existait déjà — réutilisé
+  tel quel à l'intérieur du nouveau composant FinancialSummary plutôt que
+  redéfini.
+
+Ce qui manquait réellement a été ajouté dans `css/components.css` :
+**PageHeader, StatCard, FinancialSummary, Alert, ProgressBar, DataTable,
+Segmented**, plus une extension optionnelle d'EmptyState (icône/titre/
+action, rétrocompatible avec `emptyHTML()` texte seul).
+
+### Consolidation du composant Card
+
+L'audit avait repéré 4 variantes de carte non reliées entre elles
+(`.card`, `.list-card`, `.liste-card`, `.week-card`). Après inspection
+réelle du HTML généré :
+- `.list-card` et `.liste-card` étaient déjà utilisées **combinées** à
+  `.card` dans le HTML (`class="card list-card"`) — ce sont maintenant des
+  alias documentés d'un même modificateur `.card--list`, valeurs
+  strictement inchangées.
+- `.week-card` était utilisée **seule** (jamais avec `.card`) : gardée
+  autonome mais son `border-radius: 14px` en dur a été retokenisé en
+  `var(--radius-lg)` (même valeur, 14px — aucun changement visuel, juste
+  plus de cohérence avec le design system).
+- Un modificateur `.card--interactive` a été ajouté pour le retour tactile
+  au clic (`:active { transform: scale(0.99) }`), déjà présent sur
+  `.week-card` et désormais disponible pour toute carte cliquable future.
+
+**Aucun `id`/classe déplacé ni renommé dans le HTML généré** : cette
+consolidation s'est faite uniquement côté CSS, donc à risque nul pour
+l'existant.
+
+### Nouveaux composants (résumé)
+
+| Composant | Rôle prévu |
+|---|---|
+| `.page-header` | Titre de page (Phases D à I, au fur et à mesure de la refonte de chaque écran) |
+| `.stat-card` | Indicateur mis en avant (niveau 1/2 du tableau de bord, Phase D) — distinct de `.kpi` (tuile dense niveau 3, conservée) |
+| `.financial-summary` | Solde/synthèse (Phase G : Finance/Caisse ; réutilisable sur Accueil et Dettes) |
+| `.alert` (+ 4 variantes) | Bannière persistante — **déjà utilisé en Phase C** : la bannière de sauvegarde sur Accueil est migrée de styles inline vers `.alert.alert--warning.alert--clickable` (premier exemple concret de suppression de styles inline, section suivante) |
+| `.progress-bar` | Progression de paiement (Phase H : Activités) |
+| `.data-table` / `.data-table-wrap` | Premier tableau pensé pour l'écran (les `<table>` existants ne servaient qu'à l'impression PDF) — pour Membres desktop (Phase E) |
+| `.segmented` | Bascule entre vues exclusives sur piste neutre (Phase G/H, sous-navigation Finance/Activités), distincte visuellement du Chip de filtre (fond accent) |
+
+### Migration concrète (pas seulement de la préparation)
+
+La bannière "sauvegarde requise" de l'Accueil (`js/app.js`, `renderAccueil`)
+a été convertie de son ancien habillage 100% inline
+(`style="background:var(--bg-warning);border-color:transparent;..."` sur
+une `.card` détournée) vers `<div class="alert alert--warning
+alert--clickable">`. Même `id="backupWarnBox"`, même comportement de clic
+(ouvre Système) — seul l'habillage change, et retire 4 déclarations
+`style="..."` du fichier.
+
+### Fichiers modifiés
+
+`css/components.css` (consolidation Card + 7 nouveaux composants),
+`js/app.js` (migration de la bannière de sauvegarde vers Alert), `sw.js`
+(cache `v21` → `v22`). **`js/db.js` : toujours aucune ligne modifiée.**
+
+### Ce qui n'a délibérément pas été fait
+
+- Pas de composant Drawer : aucun écran n'en a encore un besoin concret
+  identifié. Sera ajouté seulement quand une phase de contenu (probablement
+  Membres desktop, Phase E) en aura réellement l'usage — cohérent avec la
+  consigne de ne pas créer de composant juste pour cocher une case.
+- Pas de migration en masse des 182 styles inline de `app.js` vers les
+  nouveaux composants : une seule migration concrète a été faite (la
+  bannière ci-dessus) pour valider le composant Alert en conditions
+  réelles. Le reste sera migré écran par écran, au fil des Phases D à J,
+  quand chaque écran est de toute façon réécrit — migrer maintenant un
+  style qui sera de nouveau réécrit en Phase D/E/etc. aurait été double
+  travail pour rien.
+- Déplacement de `.skeleton-block` de `base.css` vers `components.css`
+  (repéré dans l'audit comme rangement incohérent) : reporté à la Phase J
+  ("nettoyage"), comme prévu dans le tableau de synthèse de l'audit —
+  aucun impact fonctionnel à le laisser en l'état d'ici là.
+
+### Vérifications effectuées
+
+- Les 6 fichiers `.css` revalidés avec un parseur strict, les 6 fichiers
+  `.js` revalidés avec `acorn` en `ecmaVersion: 2019` : tout passe.
+- Recherche de sélecteurs CSS dupliqués par erreur de copier-coller dans
+  `components.css` : une correspondance trouvée (`.liste-card`), vérifiée
+  manuellement — il s'agit de deux règles légitimes et complémentaires
+  (padding d'un côté, marge/curseur de l'autre), pas d'un doublon.
+- `getElementById(...)` de `renderAccueil` reconfronté à son template
+  après la migration de la bannière : aucun identifiant manquant.
+- Comparaison avec le zip original : en plus des fichiers des Phases A/B,
+  seul `css/components.css` gagne du contenu nouveau ; `js/db.js` toujours
+  identique caractère pour caractère.
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase C (composants réutilisables) démarre immédiatement à la suite de ce
-rapport, dans la continuité de la même session de travail.
+Phase D (dashboard) démarre immédiatement à la suite de ce rapport, dans
+la continuité de la même session de travail.
