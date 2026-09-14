@@ -629,7 +629,126 @@ logique de navigation par domaine déjà adoptée en Phase B.
 
 ---
 
+## Phase H — Activités + Calendrier
+
+### Constat de départ
+
+Comme pour Membres et Dimanche, le module Activités remplissait déjà une
+bonne partie de la demande (section 12 du brief UI/UX) : nom, date, lieu,
+participants, statut, frais, résumé financier agrégé (payés/partiels/total
+reçu) étaient déjà présents dans la liste et la fiche détail. Ce qui
+manquait précisément : le brief demande "progression des paiements... et
+montant collecté, reste" avec des "progress bars lorsque cela apporte une
+information réellement utile" — la progression n'existait qu'en texte
+("X payés/Y"), sans montant collecté/reste visible, ni indicateur visuel.
+
+### Ce qui a changé
+
+- **Carte d'activité (liste)** : ajout d'une barre de progression
+  (`.progress-bar`, Phase C) sous chaque activité ayant des frais définis,
+  avec le montant collecté et le reste (ou "Complet") juste en dessous —
+  remplace le texte "X payés/Y" qui était noyé dans la ligne de méta-infos.
+- **Fiche détail d'activité** (`#ld_stats`) : même traitement — une barre
+  de progression et un montant "reste" ajoutés au résumé financier
+  existant (Total inscrits/Payés/Partiels/Total reçu, conservés
+  inchangés).
+- Dans les deux cas, la barre n'apparaît que si l'activité a des frais
+  définis et un montant attendu supérieur à zéro (une activité "liste de
+  participants" sans frais n'affiche rien de financier, comme avant).
+
+### Fichiers modifiés
+
+`js/app.js` (`renderListesList`, `refreshListeDetailBody`). `sw.js`
+(cache `v26` → `v27`). **`js/db.js` : toujours aucune ligne modifiée** —
+`statistiquesActivite()` et `infosParticipantActivite()` fournissaient
+déjà `montantEncaisse`/`resteAEncaisser`/`tauxPaiement`, non consommés
+par l'écran jusqu'ici.
+
+### Ce qui n'a délibérément pas été fait
+
+- Pas de sous-onglets "Paiements"/"Historique" distincts dans la fiche
+  détail (demandés en section 12 du brief, en plus de Résumé/Participants/
+  Frais déjà présents). Construire une vraie liste chronologique des
+  paiements individuels d'une activité demanderait une nouvelle fonction
+  de lecture dans `js/db.js` (aucune fonction existante n'expose
+  aujourd'hui l'historique brut de `liste_paiements` par membre) — hors
+  du périmètre "je ne touche pas à `db.js`" fixé pour cette refonte
+  UI/UX. À reconsidérer explicitement si souhaité : ce serait un ajout
+  Dexie en lecture seule, à faible risque, mais je préfère le signaler
+  plutôt que le faire sans validation.
+- Le Calendrier (Mois/Agenda) n'a pas été modifié : il fonctionne déjà
+  bien comme outil de consultation, et le brief de cette phase porte
+  spécifiquement sur "progression des paiements", qui ne concerne pas
+  cette vue.
+
+### Vérifications effectuées
+
+- Les 3 fonctions modifiées relues en entier après édition, aucune
+  troncature de bloc.
+- CSS et JS (acorn ES2019) revalidés : tout passe.
+- `js/db.js` confirmé identique caractère pour caractère.
+
+---
+
+## Phase I — Paramètres + Sauvegarde + Système
+
+### Ce qui a changé et pourquoi
+
+C'était le point le plus concret de l'audit initial (section 5/21 du
+brief) : le bouton **"Charger les données de test"** (action normale,
+`.btn-primary`) et **"Effacer toutes les données"** (action irréversible)
+partageaient la même carte, distingués uniquement par une couleur de
+texte — exactement ce que la section 21 ("Actions dangereuses") du brief
+interdit.
+
+- **"Effacer toutes les données" quitte la carte "Données de
+  démonstration"** et rejoint la Zone dangereuse, avec les 2 autres
+  actions irréversibles déjà présentes (suppression des anniversaires,
+  réinitialisation cotisations/dettes/caisse) — les 3 seules actions
+  destructrices de l'application sont maintenant **au même endroit**, nulle
+  part ailleurs.
+- **Zone dangereuse entièrement reconstruite** : un bandeau **Alert
+  danger** ("Actions irréversibles... exporte une sauvegarde avant de
+  continuer") au-dessus des 3 boutons, chacun dans sa propre carte à fond
+  et bordure rouge clairement visibles (avant : simple texte rouge sur
+  fond neutre). Le titre de section lui-même est teinté en rouge.
+  Impossible de confondre ces boutons avec une action normale, y compris
+  en scrollant vite sur mobile.
+- **Réorganisation par niveau de risque** plutôt que par thème isolé :
+  Paramètres → Sauvegarde → Export & impression → Apparence → À propos
+  (actions normales) → Données de démonstration (à part, avertissement
+  renforcé sur le remplacement des données) → Zone dangereuse (tout en
+  bas, la plus éloignée possible d'un geste accidentel en haut d'écran).
+
+### Fichiers modifiés
+
+`js/app.js` (`renderSysteme`, réorganisation du template uniquement — pas
+de nouvelle logique). `sw.js` (cache `v27` → `v28`).
+**`js/db.js` : toujours aucune ligne modifiée** — `confirmWithPassword()`
+protège déjà chacune des 3 actions, comportement inchangé.
+
+### Ce qui n'a délibérément pas changé
+
+- La protection par mot de passe administrateur (`confirmWithPassword`)
+  reste le seul verrou technique, inchangé — cette phase est un
+  changement de présentation, pas de sécurité (le chantier Comptabilité
+  séparé traite la sécurité en profondeur, sur validation).
+- Paramètres, Sauvegarde, Export PDF, Apparence, À propos : contenu et
+  comportement strictement identiques, seule leur position dans la page a
+  changé.
+
+### Vérifications effectuées
+
+- Tous les boutons de la Zone dangereuse revérifiés un par un : même
+  `id`, même gestionnaire d'événement, même `confirmWithPassword()`
+  qu'avant le déplacement — seul l'emplacement dans le DOM change.
+- CSS et JS (acorn ES2019) revalidés : tout passe.
+- `js/db.js` confirmé identique caractère pour caractère.
+
+---
+
 ## Phases suivantes (à venir)
 
-Phase H (Activités + Calendrier) démarre immédiatement à la suite de ce
-rapport, dans la continuité de la même session de travail.
+Phase J (Responsive + Accessibilité + Performance + Nettoyage) démarre
+immédiatement à la suite de ce rapport — c'est la dernière phase du plan
+UI/UX initial.

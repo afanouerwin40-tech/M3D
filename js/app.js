@@ -1788,11 +1788,22 @@ async function renderListesList() {
           <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
           <div class="info">
             <div class="name">${esc(l.nom)} <span class="badge ${STATUT_ACTIVITE_BADGE[statutEvt]}" style="margin-left:4px;">${STATUT_ACTIVITE_LABEL[statutEvt]}</span>${fermee ? ` <span class="badge badge-no">Cloturee</span>` : ""}</div>
-            <div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}${stats ? ` &middot; ${stats.payes} paye${stats.payes > 1 ? "s" : ""}/${membres.length}` : ""}</div>
+            <div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}</div>
             ${lieuHeure ? `<div class="meta">${lieuHeure}</div>` : ""}
           </div>
         </div>
         ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
+        ${
+          stats && stats.montantAttendu > 0
+            ? `<div style="margin-top:10px;">
+                <div class="progress-bar" style="margin-bottom:6px;"><div class="progress-bar-fill ${stats.tauxPaiement >= 100 ? "success" : ""}" style="width:${Math.min(100, stats.tauxPaiement)}%;"></div></div>
+                <div class="detail-row" style="border:none;padding:0;font-size:var(--text-caption);">
+                  <span class="k">${fmt(stats.montantEncaisse)} collecte${stats.resteAEncaisser > 0 ? ` &middot; ${stats.payes}/${membres.length} payes` : ""}</span>
+                  <span class="v" style="color:${stats.resteAEncaisser > 0 ? "var(--warning)" : "var(--success)"};">${stats.resteAEncaisser > 0 ? `Reste ${fmt(stats.resteAEncaisser)}` : "Complet"}</span>
+                </div>
+              </div>`
+            : ""
+        }
       </div>`;
     }),
   );
@@ -2077,7 +2088,10 @@ async function refreshListeDetailBody(id) {
     const valeurs = Object.values(infosParMembre);
     const payes = valeurs.filter((i) => i.statut === "paye").length;
     const partiels = valeurs.filter((i) => i.statut === "partiel").length;
+    const totalAttendu = valeurs.reduce((a, i) => a + i.attendu, 0);
     const totalRecu = valeurs.reduce((a, i) => a + i.paye, 0);
+    const reste = Math.max(0, totalAttendu - totalRecu);
+    const pct = totalAttendu > 0 ? Math.min(100, Math.round((totalRecu / totalAttendu) * 100)) : 0;
 
     statsBox.innerHTML = `
       <div class="activite-stats-grid">
@@ -2086,7 +2100,18 @@ async function refreshListeDetailBody(id) {
           <div class="activite-stat"><div class="lbl">Payes</div><div class="val">${payes}</div></div>
           <div class="activite-stat"><div class="lbl">Partiels</div><div class="val">${partiels}</div></div>
           <div class="activite-stat"><div class="lbl">Total recu</div><div class="val">${fmt(totalRecu)}</div></div>` : ""}
-      </div>`;
+      </div>
+      ${
+        frais.length && totalAttendu > 0
+          ? `<div style="margin:10px 0 4px;">
+              <div class="progress-bar" style="margin-bottom:6px;"><div class="progress-bar-fill ${pct >= 100 ? "success" : ""}" style="width:${pct}%;"></div></div>
+              <div class="detail-row" style="border:none;padding:0;font-size:var(--text-caption);">
+                <span class="k">${pct}% collecte</span>
+                <span class="v" style="color:${reste > 0 ? "var(--warning)" : "var(--success)"};">${reste > 0 ? `Reste ${fmt(reste)}` : "Complet"}</span>
+              </div>
+            </div>`
+          : ""
+      }`;
   }
 
   // Liste des frais
@@ -2797,13 +2822,6 @@ async function renderSysteme() {
       <div class="small-note">Utilise ceci pour changer d'appareil. L'import remplace toutes les donnees et exige le mot de passe administrateur.</div>
     </div>
 
-    <div class="section-title"><h2>Donnees de test &amp; Demonstration</h2></div>
-    <div class="card" style="margin-bottom:24px;">
-      <button class="btn btn-primary" id="btnLoadDemoData" style="margin-bottom:10px;">Charger les donnees de test</button>
-      <button class="btn btn-ghost" id="btnResetAllData" style="color:var(--danger);border-color:rgba(185, 28, 28, 0.3);">Effacer toutes les donnees (remise a zero)</button>
-      <div class="small-note" style="margin-top:10px;">Injecte un jeu complet de donnees (membres, cotisations, dettes, caisse, activites) pour essayer toutes les fonctionnalites, puis permet d'effacer les donnees de test en un clic.</div>
-    </div>
-
     <div class="section-title"><h2>Export &amp; impression</h2></div>
     <div class="card" style="margin-bottom:24px;">
       <button class="btn btn-ghost" id="exportMembresPdfBtn" style="margin-bottom:10px;">Membres — PDF</button>
@@ -2827,12 +2845,31 @@ async function renderSysteme() {
       Application Progressive Web App 100% hors-ligne. Toutes les donnees sont stockees localement dans le navigateur (IndexedDB).
     </div>
 
-    <div class="section-title"><h2>Zone dangereuse</h2></div>
-    <div class="card" style="margin-bottom:24px;border-color:var(--danger);">
-      <button class="btn btn-ghost" id="resetAnnivBtn" style="margin-bottom:10px;color:var(--danger);">Supprimer tous les anniversaires</button>
-      <div class="small-note" style="margin-bottom:16px;">Efface la date d'anniversaire de tous les membres. Les membres eux-memes sont conserves.</div>
-      <button class="btn btn-ghost" id="resetCotisBtn" style="color:var(--danger);">Reinitialiser cotisations, dettes et caisse</button>
-      <div class="small-note">Remet a zero les paiements, dettes et mouvements de caisse. Les dimanches et membres restent intacts.</div>
+    <div class="section-title"><h2>Donnees de demonstration</h2></div>
+    <div class="card" style="margin-bottom:32px;">
+      <button class="btn btn-primary" id="btnLoadDemoData">Charger les donnees de test</button>
+      <div class="small-note" style="margin-top:10px;">Injecte un jeu complet de donnees (membres, cotisations, dettes, caisse, activites) pour essayer toutes les fonctionnalites. Remplace les donnees actuelles : a utiliser sur une base vide ou de test, pas sur les vraies donnees du groupe.</div>
+    </div>
+
+    <div class="section-title" style="color:var(--danger);"><h2>Zone dangereuse</h2></div>
+    <div class="alert alert--danger" style="margin-bottom:14px;">
+      <svg class="alert-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4M12 17h.01"/><path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
+      <div class="alert-body">
+        <div class="alert-title">Actions irreversibles</div>
+        <div class="small-note" style="margin-top:2px;">Chacune des actions ci-dessous demande le mot de passe administrateur et ne peut pas etre annulee. Exporte une sauvegarde avant de continuer si tu n'es pas certain.</div>
+      </div>
+    </div>
+    <div class="card" style="margin-bottom:12px;border-color:var(--danger);background:var(--bg-danger);">
+      <button class="btn btn-ghost" id="btnResetAllData" style="color:var(--danger);border-color:var(--danger);">Effacer toutes les donnees (remise a zero)</button>
+      <div class="small-note" style="margin-top:10px;">Supprime definitivement membres, cotisations, dettes, caisse et activites pour retrouver une application vierge.</div>
+    </div>
+    <div class="card" style="margin-bottom:12px;border-color:var(--danger);background:var(--bg-danger);">
+      <button class="btn btn-ghost" id="resetAnnivBtn" style="color:var(--danger);border-color:var(--danger);">Supprimer tous les anniversaires</button>
+      <div class="small-note" style="margin-top:10px;">Efface la date d'anniversaire de tous les membres. Les membres eux-memes sont conserves.</div>
+    </div>
+    <div class="card" style="margin-bottom:24px;border-color:var(--danger);background:var(--bg-danger);">
+      <button class="btn btn-ghost" id="resetCotisBtn" style="color:var(--danger);border-color:var(--danger);">Reinitialiser cotisations, dettes et caisse</button>
+      <div class="small-note" style="margin-top:10px;">Remet a zero les paiements, dettes et mouvements de caisse. Les dimanches et membres restent intacts.</div>
     </div>
   `;
 
