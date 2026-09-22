@@ -15,11 +15,12 @@
  * @param {Function} fmt - Fonction de formatage monétaire
  * @param {Function} fmtDate - Fonction de formatage de date
  * @param {Function} emptyHTML - Fonction pour générer le HTML vide
+ * @param {Object} memById - Dictionnaire des membres par ID
  * @returns {Array} Tableau d'objets représentant les éléments du tableau de bord
  */
 function construireAuJourdhuiItems(irreguliersIds, aRelancer, pretsEnAttenteArray,
                                   openARelancerSheet, openPretsEnAttenteSheet,
-                                  fullName, initials, fmt, fmtDate, emptyHTML) {
+                                  fullName, initials, fmt, fmtDate, emptyHTML, memById) {
   const aujourdhuiItems = [];
 
   if (irreguliersIds.length > 0) {
@@ -54,7 +55,7 @@ function construireAuJourdhuiItems(irreguliersIds, aRelancer, pretsEnAttenteArra
       color: "var(--warning)",
       label: `${pretsEnAttenteArray.length} pret${pretsEnAttenteArray.length > 1 ? "s" : ""} en attente`,
       meta: "Remboursement entre membres a suivre",
-      onClick: () => openPretsEnAttenteSheet(pretsEnAttenteArray),
+      onClick: () => openPretsEnAttenteSheet(pretsEnAttenteArray, memById),
     });
   }
 

@@ -260,7 +260,8 @@ async function renderAccueil() {
     initials,
     fmt,
     fmtDate,
-    emptyHTML
+    emptyHTML,
+    memById
   );
 
   document.getElementById("aujourdhuiBox").innerHTML = accueilModule.rendreAuJourdhuiBox(
@@ -3569,8 +3570,9 @@ function openARelancerSheet(liste) {
  * Affiche la feuille des prêts en attente de remboursement avec détails.
  *
  * @param {any[]} liste
+ * @param {Object} memById - Dictionnaire des membres par ID
  */
-function openPretsEnAttenteSheet(liste) {
+function openPretsEnAttenteSheet(liste, memById) {
   console.log("openPretsEnAttenteSheet called with:", liste);
 
   // Handle null or undefined list
@@ -3580,14 +3582,10 @@ function openPretsEnAttenteSheet(liste) {
   }
 
   try {
-    // Ensure memById is available (handle potential scoping issues)
-    let localMemById = typeof memById !== 'undefined' && memById !== null ? memById : {};
-    if ((typeof memById === 'undefined' || memById === null) && typeof membres !== 'undefined' && Array.isArray(membres)) {
-      localMemById = Object.fromEntries(membres.map(m => [m.id, m]));
-      console.log("memById recreated from membres array");
-    }
+    // Use the provided memById
+    const localMemById = memById || {};
 
-    console.log("Processing loans list, memById available:", !!localMemById);
+    console.log("Processing loans list, memById available:", !!localMemById && Object.keys(localMemById).length > 0);
     const rows = liste.map((pret, index) => {
       // Handle null or undefined pret
       if (!pret || typeof pret !== 'object') {
@@ -3597,10 +3595,10 @@ function openPretsEnAttenteSheet(liste) {
 
       console.log("Processing pret:", pret);
 
-      // Assuming pret object has: preteur_id, beneficiaire_id, montant, date, etc.
-      // We need to get member names from memById which should be available in scope
-      const preteur = localMemById[pret.preteur_id] || { nom: "Inconnu", prenom: "" };
-      const beneficiaire = localMemById[pret.beneficiaire_id] || { nom: "Inconnu", prenom: "" };
+      // Assuming pret object has: id_preteur, id_debiteur, montant, date, etc.
+      // We need to get member names from memById which is now passed as parameter
+      const preteur = localMemById[pret.id_preteur] || { nom: "Inconnu", prenom: "" };
+      const beneficiaire = localMemById[pret.id_debiteur] || { nom: "Inconnu", prenom: "" };
 
       console.log("Preteur:", preteur, "Beneficiaire:", beneficiaire);
 
