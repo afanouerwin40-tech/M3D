@@ -822,7 +822,7 @@ async function renderMemberList() {
   // Rendu de la liste mobile
   const memberListBox = document.getElementById("memberList");
   if (memberListBox) {
-    memberListBox.innerHTML = membresModule.renderMemberListMobile(
+    memberListBox.innerHTML = await membresModule.renderMemberListMobile(
       membres,
       memberQuery,
       memberSort,
@@ -848,7 +848,7 @@ async function renderMemberList() {
   // Rendu du tableau desktop
   const memberTableBody = document.getElementById("memberTable");
   if (memberTableBody) {
-    memberTableBody.innerHTML = membresModule.renderMemberListDesktop(
+    memberTableBody.innerHTML = await membresModule.renderMemberListDesktop(
       membres,
       memberQuery,
       memberSort,

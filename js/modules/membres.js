@@ -24,9 +24,9 @@
  * @param {Object} STATUT_ACTIVITE_LABEL - Mapping des étiquettes de statut
  * @param {Array} FONCTIONS - Liste des fonctions disponibles
  * @param {Function} getStatutActivite - Fonction pour obtenir le statut d'activité
- * @returns {string} HTML à injecter dans la liste des membres mobile
+ * @returns {Promise<string>} HTML à injecter dans la liste des membres mobile
  */
-function renderMemberListMobile(membres, memberQuery, memberSort, memberFilterFonction, memberFilterMois, memberFilterStatut,
+async function renderMemberListMobile(membres, memberQuery, memberSort, memberFilterFonction, memberFilterMois, memberFilterStatut,
                                membresIrreguliers, membresARelancer, emptyHTML, esc, fullName, initials, fmt, fmtDate,
                                MOIS_NOMS, STATUT_ACTIVITE_BADGE, STATUT_ACTIVITE_LABEL, FONCTIONS, getStatutActivite) {
   const q = memberQuery.trim().toLowerCase();
@@ -58,7 +58,7 @@ function renderMemberListMobile(membres, memberQuery, memberSort, memberFilterFo
     list.sort((a, b) => fullName(a).localeCompare(fullName(b)));
   }
 
-  const irreguliers = new Set(membresIrreguliers());
+  const irreguliers = new Set(await membresIrreguliers());
   const boxContent = list.map((m) => {
     const isIrr = irreguliers.has(m.id);
     const annivStr = m.jour_anniversaire
@@ -100,9 +100,9 @@ function renderMemberListMobile(membres, memberQuery, memberSort, memberFilterFo
  * @param {Object} STATUT_ACTIVITE_LABEL - Mapping des étiquettes de statut
  * @param {Array} FONCTIONS - Liste des fonctions disponibles
  * @param {Function} getStatutActivite - Fonction pour obtenir le statut d'activité
- * @returns {string} HTML à injecter dans le tbody du tableau des membres desktop
+ * @returns {Promise<string>} HTML à injecter dans le tbody du tableau des membres desktop
  */
-function renderMemberListDesktop(membres, memberQuery, memberSort, memberFilterFonction, memberFilterMois, memberFilterStatut,
+async function renderMemberListDesktop(membres, memberQuery, memberSort, memberFilterFonction, memberFilterMois, memberFilterStatut,
                                 membresIrreguliers, membresARelancer, emptyHTML, esc, fullName, initials, fmt, fmtDate,
                                 MOIS_NOMS, STATUT_ACTIVITE_BADGE, STATUT_ACTIVITE_LABEL, FONCTIONS, getStatutActivite) {
   const q = memberQuery.trim().toLowerCase();
@@ -134,7 +134,7 @@ function renderMemberListDesktop(membres, memberQuery, memberSort, memberFilterF
     list.sort((a, b) => fullName(a).localeCompare(fullName(b)));
   }
 
-  const irreguliers = new Set(membresIrreguliers());
+  const irreguliers = new Set(await membresIrreguliers());
   const boxContent = list.map((m) => {
     const isIrr = irreguliers.has(m.id);
     const annivStr = m.jour_anniversaire
