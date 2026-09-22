@@ -814,79 +814,65 @@ async function renderMembres() {
 
 /**
  * Rendu de la liste filtrée et triée des membres.
+ * Utilise le module membres pour le rendu et l'attache des événements.
  */
 async function renderMemberList() {
-  const q = memberQuery.trim().toLowerCase();
-  const all = await listMembres();
+  const membres = await listMembres();
 
-  let list = all.filter((m) =>
-    fullName(m).toLowerCase().includes(q) || (m.telephone || "").includes(q),
-  );
-
-  if (memberFilterFonction) {
-    list = list.filter((m) => (m.fonction || "Membre") === memberFilterFonction);
-  }
-  if (memberFilterMois) {
-    list = list.filter((m) => String(m.mois_anniversaire || "") === memberFilterMois);
-  }
-  if (memberFilterStatut) {
-    list = list.filter((m) => m.statut === memberFilterStatut);
-  }
-
-  if (memberSort === "date") {
-    list.sort((a, b) => (b.date_adhesion || "").localeCompare(a.date_adhesion || ""));
-  } else if (memberSort === "fonction") {
-    list.sort((a, b) =>
-      (a.fonction || "Membre").localeCompare(b.fonction || "Membre") ||
-      fullName(a).localeCompare(fullName(b)),
+  // Rendu de la liste mobile
+  const memberListBox = document.getElementById("memberList");
+  if (memberListBox) {
+    memberListBox.innerHTML = membresModule.renderMemberListMobile(
+      membres,
+      memberQuery,
+      memberSort,
+      memberFilterFonction,
+      memberFilterMois,
+      memberFilterStatut,
+      membresIrreguliers,
+      membresARelancer,
+      emptyHTML,
+      esc,
+      fullName,
+      initials,
+      fmt,
+      fmtDate,
+      MOIS_NOMS,
+      STATUT_ACTIVITE_BADGE,
+      STATUT_ACTIVITE_LABEL,
+      FONCTIONS,
+      getStatutActivite
     );
   }
 
-  const irreguliers = new Set(await membresIrreguliers());
-  const box = document.getElementById("memberList");
-  if (!box) return;
-
-  box.innerHTML = list.map((m) => {
-    const isIrr = irreguliers.has(m.id);
-    const annivStr = m.jour_anniversaire
-      ? `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`
-      : "Non renseigne";
-
-    return `
-      <div class="row" data-id="${m.id}">
-        <div class="avatar">${initials(m)}</div>
-        <div class="info">
-          <div class="name">${esc(fullName(m))}${isIrr ? ` <span class="badge" style="background:var(--bg-danger);color:var(--danger);margin-left:4px;">Irregulier</span>` : ""}</div>
-          <div class="meta">${esc(m.fonction || "Membre")} &middot; ${annivStr}</div>
-        </div>
-        <span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span>
-      </div>`;
-  }).join("") || emptyHTML("Aucun membre correspondant.");
-
-  box.querySelectorAll(".row").forEach((el) =>
-    el.addEventListener("click", () => openMemberDetail(/** @type {HTMLElement} */ (el).dataset.id)),
-  );
-
-  const tableBody = document.getElementById("memberTable");
-  if (tableBody) {
-    tableBody.innerHTML = list.map((m) => {
-      const isIrr = irreguliers.has(m.id);
-      const annivStr = m.jour_anniversaire
-        ? `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`
-        : "Non renseigne";
-      return `
-        <tr data-id="${m.id}">
-          <td><div class="info" style="display:flex;align-items:center;gap:10px;"><div class="avatar" style="width:30px;height:30px;font-size:12px;">${initials(m)}</div><span>${esc(fullName(m))}</span>${isIrr ? ` <span class="badge" style="background:var(--bg-danger);color:var(--danger);">Irregulier</span>` : ""}</div></td>
-          <td>${esc(m.fonction || "Membre")}</td>
-          <td>${annivStr}</td>
-          <td><span class="badge ${m.statut === "Actif" ? "badge-yes" : "badge-no"}">${m.statut}</span></td>
-        </tr>`;
-    }).join("") || `<tr><td colspan="4">${emptyHTML("Aucun membre correspondant.")}</td></tr>`;
-
-    tableBody.querySelectorAll("tr[data-id]").forEach((el) =>
-      el.addEventListener("click", () => openMemberDetail(/** @type {HTMLElement} */ (el).dataset.id)),
+  // Rendu du tableau desktop
+  const memberTableBody = document.getElementById("memberTable");
+  if (memberTableBody) {
+    memberTableBody.innerHTML = membresModule.renderMemberListDesktop(
+      membres,
+      memberQuery,
+      memberSort,
+      memberFilterFonction,
+      memberFilterMois,
+      memberFilterStatut,
+      membresIrreguliers,
+      membresARelancer,
+      emptyHTML,
+      esc,
+      fullName,
+      initials,
+      fmt,
+      fmtDate,
+      MOIS_NOMS,
+      STATUT_ACTIVITE_BADGE,
+      STATUT_ACTIVITE_LABEL,
+      FONCTIONS,
+      getStatutActivite
     );
   }
+
+  // Attache des événements
+  membresModule.attachMemberListEvents(openMemberDetail);
 }
 
 /**
