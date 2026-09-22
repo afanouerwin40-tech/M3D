@@ -128,7 +128,7 @@ async function renderAccueil() {
     prochains,
     listes,
     irreguliersIds,
-    pretsEnAttente,
+    pretsEnAttenteArray,
     derniereSauvegarde,
     sessionId,
     membresMois,
@@ -274,15 +274,15 @@ async function renderAccueil() {
       onClick: () => openARelancerSheet(aRelancer),
     });
   }
-  if (pretsEnAttente.length > 0) {
+  if (pretsEnAttenteArray && pretsEnAttenteArray.length > 0) {
     aujourdhuiItems.push({
       id: "auj-prets",
-      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M17 8V6a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h2M9 16v2a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-9a2 2 0 0 0-2-2H11a2 2 0 0 0-2 2v9Z"/></svg>`,
+      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h8"/></svg>`,
       bg: "var(--bg-warning)",
       color: "var(--warning)",
-      label: `${pretsEnAttente.length} pret${pretsEnAttente.length > 1 ? "s" : ""} en attente`,
+      label: `${pretsEnAttenteArray.length} pret${pretsEnAttenteArray.length > 1 ? "s" : ""} en attente`,
       meta: "Remboursement entre membres a suivre",
-      onClick: () => { financeVue = "prets"; showTab("finance"); },
+      onClick: () => openPretsEnAttenteSheet(pretsEnAttenteArray),
     });
   }
 
@@ -318,7 +318,6 @@ async function renderAccueil() {
         .filter(Boolean)
         .join(" &middot; ");
       return `<div class="row" data-id="${l.id}">
-        <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
         <div class="info"><div class="name">${esc(l.nom)}</div><div class="meta">${fmtDate(l.date)}${lieuHeure ? " &middot; " + lieuHeure : ""}</div></div>
         <span class="badge ${STATUT_ACTIVITE_BADGE[statutEvt]}">${STATUT_ACTIVITE_LABEL[statutEvt]}</span>
       </div>`;
@@ -3564,15 +3563,24 @@ async function exportRapportPDF() {
  */
 function openARelancerSheet(liste) {
   const rows = liste.map((x) => {
-    const tel = (x.membre.telephone || "").replace(/\s+/g, "");
-    const waLink = tel ? `https://wa.me/${tel}?text=${encodeURIComponent(`Bonjour ${x.membre.prenom}, petit rappel amical pour la cotisation de la Jeunesse M3D.`)}` : null;
+    // Extract first name from full name (format: "NOM Prenom")
+    const fullNameStr = x.nom || "";
+    const nameParts = fullNameStr.trim().split(/\s+/);
+    const nom = nameParts[0] || "";
+    const prenom = nameParts.length > 1 ? nameParts.slice(1).join(' ') : "";
+
+    const tel = (x.telephone || "").replace(/\s+/g, "");
+    const waLink = tel ? `https://wa.me/${tel}?text=${encodeURIComponent(`Bonjour ${prenom}, petit rappel amical pour la cotisation de la Jeunesse M3D.`)}` : null;
 
     return `
       <div class="row" style="cursor:default;">
-        <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${initials(x.membre)}</div>
+        <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${initials({ nom, prenom })}</div>
         <div class="info">
-          <div class="name">${esc(fullName(x.membre))}</div>
-          <div class="meta">${x.nbImpayes} dimanche(s) impaye(s) &middot; ${fmt(x.totalDu)}</div>
+          <div class="name">${esc(x.nom)}</div>
+          <div class="meta">
+            ${x.irregulier ? '<span style="color:var(--danger);">Irregulier</span>' : ''}
+            ${x.montantDette > 0 ? ` <span style="color:var(--warning);">(+${fmt(x.montantDette)})</span>` : ''}
+          </div>
         </div>
         ${waLink ? `<a href="${waLink}" target="_blank" rel="noopener" class="btn-chip" style="text-decoration:none;">Relancer</a>` : `<span class="small-note">Sans numero</span>`}
       </div>`;
@@ -3586,6 +3594,89 @@ function openARelancerSheet(liste) {
 
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
 }
+
+/**
+ * Affiche la feuille des prêts en attente de remboursement avec détails.
+ *
+ * @param {any[]} liste
+ */
+function openPretsEnAttenteSheet(liste) {
+  console.log("openPretsEnAttenteSheet called with:", liste);
+
+  // Handle null or undefined list
+  if (!liste || !Array.isArray(liste)) {
+    console.error("openPretsEnAttenteSheet: liste is not a valid array", liste);
+    return;
+  }
+
+  try {
+    // Ensure memById is available (handle potential scoping issues)
+    let localMemById = typeof memById !== 'undefined' && memById !== null ? memById : {};
+    if ((typeof memById === 'undefined' || memById === null) && typeof membres !== 'undefined' && Array.isArray(membres)) {
+      localMemById = Object.fromEntries(membres.map(m => [m.id, m]));
+      console.log("memById recreated from membres array");
+    }
+
+    console.log("Processing loans list, memById available:", !!localMemById);
+    const rows = liste.map((pret, index) => {
+      // Handle null or undefined pret
+      if (!pret || typeof pret !== 'object') {
+        console.error("Invalid pret at index", index, pret);
+        return `<div class="row"><div class="info">Donnée de prêt invalide</div></div>`;
+      }
+
+      console.log("Processing pret:", pret);
+
+      // Assuming pret object has: preteur_id, beneficiaire_id, montant, date, etc.
+      // We need to get member names from memById which should be available in scope
+      const preteur = localMemById[pret.preteur_id] || { nom: "Inconnu", prenom: "" };
+      const beneficiaire = localMemById[pret.beneficiaire_id] || { nom: "Inconnu", prenom: "" };
+
+      console.log("Preteur:", preteur, "Beneficiaire:", beneficiaire);
+
+      const preteurName = fullName(preteur);
+      const beneficiaireName = fullName(beneficiaire);
+      const montantFmt = fmt(pret.montant || 0);
+      const dateFmt = fmtDate(pret.date || "");
+
+      console.log("PreteurName:", preteurName, "BeneficiaireName:", beneficiaireName, "MontantFmt:", montantFmt, "DateFmt:", dateFmt);
+
+      return `
+        <div class="row" style="cursor:default;">
+          <div class="avatar" style="background:var(--bg-warning);color:var(--warning);">${initials(preteur)}</div>
+          <div class="info">
+            <div class="name">${esc(preteurName)} → ${esc(beneficiaireName)}</div>
+            <div class="meta">${montantFmt} • ${dateFmt}</div>
+          </div>
+        </div>`;
+    }).join("") || emptyHTML("Aucun pret en attente de remboursement.");
+
+    console.log("Rows generated:", rows.length);
+
+    const ov = openSheet(`
+      <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
+      <h3>Prets en attente (${liste.length})</h3>
+      <div style="margin-top:12px;">${rows}</div>
+    `);
+
+    ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+    console.log("Sheet opened successfully");
+  } catch (error) {
+    console.error("Error in openPretsEnAttenteSheet:", error);
+    console.error("Error stack:", error.stack);
+    // Show error in sheet format
+    const ov = openSheet(`
+      <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
+      <h3>Erreur lors du chargement des prêts</h3>
+      <div style="margin-top:12px; color:var(--danger);">
+        Une erreur est survenue lors du chargement de la liste des prêts en attente.
+        Veuillez consulter la console pour plus de détails.
+      </div>
+    `);
+    ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+  }
+}
+
 
 // ============================================================================
 // ÉCRANS D'INITIALISATION DU MOT DE PASSE & CONNEXION ADMIN

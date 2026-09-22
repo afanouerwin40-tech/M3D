@@ -1520,38 +1520,63 @@ async function membresARelancer(irreguliersIdsPrecalcules) {
       ? Promise.resolve(irreguliersIdsPrecalcules)
       : membresIrreguliers(),
   ]);
+
   const dettesImpayees = dettes.filter((d) => d.statut === "Impayee");
   const parMembre = new Map();
+
+  // ÉTAPE 1 : Traiter les dettes UNIQUEMENT pour établir qui a une dette
+  // On ne définit pas encore le flag irregulier ici
   for (const d of dettesImpayees) {
     const key = d.id_membre;
-    if (!parMembre.has(key))
+    if (!parMembre.has(key)) {
+      const m = await db.membres.get(key);
+      if (!m) continue;
       parMembre.set(key, {
         id_membre: key,
-        nom: d.membre,
-        telephone: d.telephone,
+        nom: `${m.nom} ${m.prenom}`,
+        telephone: m.telephone,
         montantDette: 0,
-        irregulier: false,
+        hasDebt: true,       // On suit séparément si la membre a une dette
+        isIrregulier: false  // On suivra séparément le statut irrégulier
       });
+    }
+    // On accumule le montant de la dette
     parMembre.get(key).montantDette += d.montant;
   }
+
+  // ÉTAPE 2 : Traiter les membres irréguliers pour définir correctement le flag
   for (const id of irreguliersIds) {
+    const m = await db.membres.get(id);
+    if (!m) continue;
+
     if (!parMembre.has(id)) {
-      const m = await db.membres.get(id);
-      if (!m) continue;
+      // Le membre n'appartient qu'à la liste des irréguliers (aucune dette)
       parMembre.set(id, {
         id_membre: id,
         nom: `${m.nom} ${m.prenom}`,
         telephone: m.telephone,
         montantDette: 0,
-        irregulier: true,
+        hasDebt: false,
+        isIrregulier: true   // Définit clairement le statut irrégulier
       });
     } else {
-      parMembre.get(id).irregulier = true;
+      // Le membre figure dans LES DEUX listes - on marque comme irrégulier
+      parMembre.get(id).isIrregulier = true;
+      parMembre.get(id).hasDebt = true;
     }
   }
-  return Array.from(parMembre.values()).sort((a, b) =>
-    a.nom.localeCompare(b.nom),
-  );
+
+  // ÉTAPE 3 : Convertir au format final attendu par le reste du code
+  return Array.from(parMembre.values())
+    .filter(member => member.isIrregulier || member.hasDebt) // Seulement ceux nécessitant une action
+    .map(member => ({
+      id_membre: member.id_membre,
+      nom: member.nom,
+      telephone: member.telephone,
+      montantDette: member.montantDette,
+      irregulier: member.isIrregulier   // On utilise le nom de propriété attendu
+    }))
+    .sort((a, b) => a.nom.localeCompare(b.nom));
 }
 
 // Garde anti-doublon : renvoie le dimanche existant a cette date (session
