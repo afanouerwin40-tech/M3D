@@ -955,7 +955,7 @@ async function openMemberDetail(id) {
     ${m.observations ? `<div class="detail-row"><span class="k">Observations</span><span class="v">${esc(m.observations)}</span></div>` : ""}
 
     <div class="text-caption" style="color:var(--text-muted);margin:14px 0 4px;">Finances</div>
-    <div class="detail-row"><span class="k">Cotisation personnalisee</span><span class="v">${m.cotisation_personnalisee ? fmt(m.cotisation_personnalisee) + " / sem." : "Montant par defaut"}</span></div>
+    <div class="detail-row"><span class="k">Cotisation personnalisee</span><span class="v">${m.cotisation_personnalisee ? fmt(m.cotisation_personnalisee) + " / sem." : "500 FCFA / sem."}</span></div>
     <div class="detail-row"><span class="k">Dettes en cours</span><span class="v" style="color:${totalDette ? "var(--danger)" : "var(--success)"};">${fmt(totalDette)}</span></div>
 
     <div class="sheet-actions">
