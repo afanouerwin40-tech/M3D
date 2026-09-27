@@ -184,15 +184,6 @@ async function renderAccueil() {
           </div>`
         : ""
     }
-    ${
-      membres.length === 0
-        ? `<div class="card" style="margin-bottom:18px;border-left:4px solid var(--accent);background:var(--surface);">
-            <div style="font-weight:700;font-size:15px;margin-bottom:4px;color:var(--text);">Bienvenue sur M3D Gestion</div>
-            <div class="small-note" style="margin-bottom:12px;color:var(--text-2);">Votre application est actuellement vierge. Vous pouvez injecter un jeu de donnees de test en 1 clic pour explorer toutes les fonctionnalites (membres, cotisations, caisse, activites), puis les effacer quand vous aurez termine.</div>
-            <button class="btn btn-primary" id="accueilLoadDemoBtn" style="padding:10px 16px;font-size:14px;width:auto;">Charger les donnees de test</button>
-          </div>`
-        : ""
-    }
     <div class="section-title" style="margin-top:0;"><h2>Aujourd'hui</h2></div>
     <div class="card list-card" id="aujourdhuiBox" style="margin-bottom:22px;"></div>
 
@@ -337,17 +328,7 @@ accueilModule.attacherEvenementsAuJourdhui(aujourdhuiItems);
   document.getElementById("dash-weeks").innerHTML =
     last.map((j) => weekCardDetailedHTML(j, memById)).join("") ||
     emptyHTML("Aucune collecte enregistree.");
-  attachWeekCardHandlers();
-
-  const loadDemoBtn = document.getElementById("accueilLoadDemoBtn");
-  if (loadDemoBtn) {
-    loadDemoBtn.addEventListener("click", async () => {
-      await genererDonneesDemo();
-      toast("Donnees de test chargees avec succes !");
-      await synchroniserSessionTopBar();
-      showTab("accueil");
-    });
-  }
+  cotisationsModule.attachWeekCardHandlers(openWeekDetail);
 
   // Dessin des graphiques Canvas
   lastJoursStats = joursStats;
@@ -758,17 +739,6 @@ function weekCardDetailedHTML(j, memById) {
     <div class="detail-row" style="border:none;padding:0 0 6px;"><span class="k">Montant par membre</span><span class="v">${fmt(j.montantAttendu)}</span></div>
     <div class="tag-row"><span class="tag ${tagClass}">${tagText}</span></div>
   </div>`;
-}
-
-/**
- * Attache les écouteurs de clic sur toutes les cartes de dimanches affichées.
- */
-function attachWeekCardHandlers() {
-  document.querySelectorAll("[data-dimanche]").forEach((el) => {
-    el.addEventListener("click", () => {
-      openWeekDetail(/** @type {HTMLElement} */ (el).dataset.dimanche);
-    });
-  });
 }
 
 // ============================================================================
@@ -1188,41 +1158,13 @@ async function renderDimanche() {
  * Rendu de la liste des dimanches filtrés.
  */
 async function renderDimancheList() {
-  const q = dimancheQuery.trim().toLowerCase();
   const jours = await joursAvecStats();
-
-  let list = jours.filter((j) => (dimancheShowArchives ? j.dimanche.archivee : !j.dimanche.archivee));
-  if (q) {
-    list = list.filter((j) =>
-      fmtDate(j.dimanche.date).includes(q) ||
-      j.beneficiaires.join(" ").toLowerCase().includes(q),
-    );
-  }
 
   const box = document.getElementById("dimanchesList");
   if (!box) return;
 
-  box.innerHTML = list.map((j) => weekCardHTML(j)).join("") ||
-    emptyHTML(dimancheShowArchives ? "Aucun dimanche archive." : "Aucune collecte enregistree. Cree le premier dimanche.");
-
-  attachWeekCardHandlers();
-}
-
-/**
- * Gabarit simplifié d'une carte de dimanche.
- * @param {any} j
- * @returns {string}
- */
-function weekCardHTML(j) {
-  const tagClass = j.solde > 0 ? "tag-surplus" : j.solde < 0 ? "tag-manque" : "tag-exact";
-  const tagText = j.solde > 0 ? `+ ${fmt(j.solde)} pour la caisse` : j.solde < 0 ? `Manque ${fmt(Math.abs(j.solde))}` : "Montant exact";
-  const who = j.beneficiaires.length ? esc(j.beneficiaires.join(", ")) : "Collecte normale";
-
-  return `<div class="week-card" data-dimanche="${j.dimanche.id}">
-    <div class="top"><span class="date">${fmtDate(j.dimanche.date)}</span><span class="amount">${fmt(j.totalCollecte)}</span></div>
-    <div class="desc">${who} &middot; ${j.nbPayants}/${j.nbTotal} ont cotise</div>
-    <div class="tag-row"><span class="tag ${tagClass}">${tagText}</span></div>
-  </div>`;
+  box.innerHTML = cotisationsModule.renderDimancheListHTML(jours, dimancheQuery, dimancheShowArchives, fmt, fmtDate, esc);
+  cotisationsModule.attachWeekCardHandlers(openWeekDetail);
 }
 
 /**
@@ -1245,7 +1187,7 @@ async function openNewSunday() {
     </div>
     <div class="small-note" id="nd_hint">${
       suggested.length
-        ? `Detecte automatiquement : ${suggested.map(fullName).join(", ")}. Modifie la selection si besoin.`
+        ? `Detecte automatiquement : ${esc(suggested.map(fullName).join(", "))}. Modifie la selection si besoin.`
         : "Aucun anniversaire detecte automatiquement pour cette date."
     }</div>
     <div class="small-note">Tous les membres partiront de "Non paye" — tu coches au fur et a mesure que chacun cotise.</div>
@@ -1264,6 +1206,7 @@ async function openNewSunday() {
     ov.querySelector("#nd_hint").textContent = sug.length
       ? `Detecte automatiquement : ${sug.map(fullName).join(", ")}. Modifie la selection si besoin.`
       : "Aucun anniversaire detecte automatiquement pour cette date.";
+    // Note : textContent (pas innerHTML) ici, donc pas de risque d'injection — aucun esc() necessaire.
   });
 
   ov.querySelector("#createSundayBtn").addEventListener("click", async () => {
@@ -1291,39 +1234,6 @@ async function openNewSunday() {
     showTab("dimanche");
     setTimeout(() => openWeekDetail(id), 150);
   });
-}
-
-/**
- * Génère la ligne HTML représentant un participant et son statut de cotisation.
- *
- * @param {any} p - Enregistrement paiement.
- * @param {Record<string, any>} memById - Dictionnaire des membres.
- * @param {Record<string, string>} preteurParPaiement - Dictionnaire des prêts par paiement.
- * @returns {string}
- */
-function paiementRowHTML(p, memById, preteurParPaiement) {
-  const m = memById[p.id_membre] || { nom: "?", prenom: "" };
-  const idPreteur = preteurParPaiement[p.id];
-  const preteur = idPreteur ? memById[idPreteur] : null;
-
-  let etatClasse = "off";
-  let label = "Non paye";
-
-  if (p.a_paye && preteur) {
-    etatClasse = "loan";
-    label = `Pret (${esc(fullName(preteur))})`;
-  } else if (p.a_paye) {
-    etatClasse = "on";
-    label = "Paye";
-  }
-
-  return `<div class="chip-row" data-paiement="${p.id}">
-    <span class="name">${esc(fullName(m))}</span>
-    <div class="chip-actions">
-      ${!p.a_paye ? `<button class="toggle toggle-ghost" data-pret="${p.id}" title="Un autre membre a avance l'argent">Pret</button>` : ""}
-      <button class="toggle ${etatClasse}" data-toggle-paiement="${p.id}">${label}</button>
-    </div>
-  </div>`;
 }
 
 /**
@@ -1377,7 +1287,7 @@ async function openWeekDetail(dimId) {
         </div>
       </div>
     </div>
-    <div id="wd_rows">${paiements.slice().sort(triParNom).map((p) => paiementRowHTML(p, memById, preteurParPaiement)).join("")}</div>
+    <div id="wd_rows">${paiements.slice().sort(triParNom).map((p) => cotisationsModule.paiementRowHTML(p, memById, preteurParPaiement, esc, fullName)).join("")}</div>
     <div class="sheet-actions">
       <button class="btn btn-ghost" id="wd_export" style="margin-bottom:8px;">Exporter cette cotisation (PDF)</button>
       <button class="btn btn-ghost" id="wd_archive" style="margin-bottom:8px;">${dim.archivee ? "Desarchiver" : "Archiver"} ce dimanche</button>
@@ -1434,7 +1344,7 @@ async function openWeekDetail(dimId) {
     ]);
 
     preteurParPaiement = Object.fromEntries(freshPrets.map((pr) => [pr.id_paiement, pr.id_preteur]));
-    rowsBox.innerHTML = freshPaiements.slice().sort(triParNom).map((p) => paiementRowHTML(p, memById, preteurParPaiement)).join("");
+    rowsBox.innerHTML = freshPaiements.slice().sort(triParNom).map((p) => cotisationsModule.paiementRowHTML(p, memById, preteurParPaiement, esc, fullName)).join("");
 
     const newTotal = freshPaiements.reduce((a, p) => a + p.montant_paye, 0);
     const newNbPayes = freshPaiements.filter((p) => p.a_paye).length;
@@ -2801,12 +2711,6 @@ async function renderSysteme() {
       Application Progressive Web App 100% hors-ligne. Toutes les donnees sont stockees localement dans le navigateur (IndexedDB).
     </div>
 
-    <div class="section-title"><h2>Donnees de demonstration</h2></div>
-    <div class="card" style="margin-bottom:32px;">
-      <button class="btn btn-primary" id="btnLoadDemoData">Charger les donnees de test</button>
-      <div class="small-note" style="margin-top:10px;">Injecte un jeu complet de donnees (membres, cotisations, dettes, caisse, activites) pour essayer toutes les fonctionnalites. Remplace les donnees actuelles : a utiliser sur une base vide ou de test, pas sur les vraies donnees du groupe.</div>
-    </div>
-
     <div class="section-title" style="color:var(--danger);"><h2>Zone dangereuse</h2></div>
     <div class="alert alert--danger" style="margin-bottom:14px;">
       <svg class="alert-icon" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4M12 17h.01"/><path stroke-linecap="round" stroke-linejoin="round" d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z"/></svg>
@@ -2850,18 +2754,6 @@ async function renderSysteme() {
   document.getElementById("exportDettesPdfBtn").addEventListener("click", exportDettesPDF);
   document.getElementById("exportPretsPdfBtn").addEventListener("click", exportPretsMembresPDF);
   document.getElementById("exportRapportPdfBtn").addEventListener("click", exportRapportPDF);
-
-  document.getElementById("btnLoadDemoData").addEventListener("click", async () => {
-    const totalMembres = await db.membres.count();
-    if (totalMembres > 0) {
-      const ok = confirm("Attention : le chargement des donnees de test va remplacer les donnees actuelles. Voulez-vous continuer ?");
-      if (!ok) return;
-    }
-    await genererDonneesDemo();
-    toast("Donnees de test chargees avec succes !");
-    await synchroniserSessionTopBar();
-    showTab("accueil");
-  });
 
   document.getElementById("btnResetAllData").addEventListener("click", async () => {
     const configured = await isAdminConfigured();

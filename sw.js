@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v32"; // v32 : Corrections ciblees - rapport PDF activite complet, suppression icones, dashboard avec noms, nettoyage Indigo
+const CACHE_NAME = "m3d-cache-v33"; // v33 : ajout des modules JS manquants au cache (accueil.js, membres.js, cotisations.js absents depuis leur creation)
 
 const ASSETS = [
   "./",
@@ -21,6 +21,9 @@ const ASSETS = [
   "./js/db.js",
   "./js/state.js",
   "./js/ui.js",
+  "./js/modules/accueil.js",
+  "./js/modules/membres.js",
+  "./js/modules/cotisations.js",
   "./js/app.js",
   // Icônes PWA
   "./icons/icon-192.png",
