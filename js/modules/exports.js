@@ -24,7 +24,12 @@
  * Ouvre une fenetre dediee de facon synchrone, pour rester avant tout
  * bloqueur de popup : c'est l'appel direct depuis le clic utilisateur qui
  * fait la difference entre une fenetre et un blocage.
- * @returns {Window|null}
+ * @returns {Window|null} La fenetre ouverte, ou `null` si le navigateur l'a bloquee.
+ * @sideEffect Oui : ouvre un onglet et affiche un toast d'erreur en cas de blocage.
+ * @why Les navigateurs n'autorisent `window.open()` que dans le geste utilisateur
+ * qui declenche l'action. Cette fonction doit donc rester synchrone et etre
+ * appelee au plus proche du clic : si elle etait `async` ou differee, le
+ * navigateur la considersrait comme non sollicitee par l'utilisateur.
  */
 function openPrintableWindow() {
   const win = window.open("", "_blank");
@@ -40,12 +45,22 @@ function openPrintableWindow() {
 // ============================================================================
 
 /**
- * Exporte la liste complete des membres.
+ * Exporte la liste complete des membres sous forme de tableau PDF.
+ * @returns {Promise<void>} Resolue une fois la fenetre d'impression ouverte.
+ * @sideEffect Oui : lit la base, ouvre la fenetre d'impression.
+ * @why Seul export de la liste des membres : il n'a pas de rapport dedie car il
+ * ne comporte ni calcul ni tri par personne, juste un tableau de reference.
+ * `async`/`await` : `await` suspend la fonction jusqu'a la resolution de la
+ * promesse, sans bloquer le reste de la page (le navigateur continue de peindre
+ * et de repondre aux clics pendant la lecture IndexedDB).
  */
 async function exportMembresPDF() {
   const identite = await pdfIdentite();
   const membres = await listMembres();
 
+  // `map()` transforme chaque membre en une ligne HTML. Toute valeur saisie par
+  // l'utilisateur passe par `esc()` : ce HTML sera injecte tel quel dans la
+  // fenetre d'impression, qui execute le JavaScript.
   const lignes = membres.map(
     (m) => `<tr>
       <td>${esc(m.nom || "")}</td>
@@ -53,6 +68,7 @@ async function exportMembresPDF() {
       <td>${esc(m.telephone || "—")}</td>
       <td>${esc(m.fonction || "Membre")}</td>
       <td>${
+        // `padStart(2, "0")` complete a gauche avec un zero : le 5/3 devient 05/03.
         m.jour_anniversaire
           ? `${String(m.jour_anniversaire).padStart(2, "0")}/${String(m.mois_anniversaire).padStart(2, "0")}`
           : "—"
@@ -81,22 +97,51 @@ async function exportMembresPDF() {
 // Ces quatre entrees conservent leur nom d'origine (appelees par les boutons
 // de l'interface) et deleguent au rapport specialise correspondant.
 
-/** Fiche individuelle d'un membre. @param {string} idMembre */
+/**
+ * Fiche individuelle d'un membre.
+ * @param {string} idMembre — identifiant du membre (clé primaire, format "M-XXXXX").
+ * @returns {Promise<void>}
+ * @sideEffect Oui : ouvre la fenetre d'impression via le rapport appele.
+ * @why Delegue a `rapportMembrePDF` plutot que d'implementer le document ici.
+ * On garde ce nom pour ne pas casser les boutons existants (voir §14 de CLAUDE.md :
+ * les exports restent un point d'entree, la mise en forme vit dans services/pdf/).
+ */
 async function exportMembreIndividuelPDF(idMembre) {
   await rapportMembrePDF(idMembre);
 }
 
-/** Feuille de collecte d'un dimanche. @param {string} idDimanche */
+/**
+ * Feuille de collecte d'un dimanche.
+ * @param {string} idDimanche — identifiant du dimanche (clé primaire de la table `dimanches`).
+ * @returns {Promise<void>}
+ * @sideEffect Oui : ouvre la fenetre d'impression.
+ * @why Idem : la feuille de collecte et la liste des non-payants sont produites
+ * par le rapport specialise, qui gere le format A4 et la pagination.
+ */
 async function exportCotisationPDF(idDimanche) {
   await rapportCotisationPDF(idDimanche);
 }
 
-/** Fiche de participation d'une activite. @param {string} id */
+/**
+ * Fiche de participation d'une activite.
+ * @param {string} id — identifiant de l'activite (clé primaire de la table `listes`).
+ * @returns {Promise<void>}
+ * @sideEffect Oui : ouvre la fenetre d'impression.
+ * @why Le nom historique `exportListePDF` est conserve alors que la table
+ * `listes` s'appelle aujourd'hui activites (v1.8.0) : le renommer casserait
+ * les appels dans l'interface sans gain de clarte pour l'utilisateur final.
+ */
 async function exportListePDF(id) {
   await rapportActivitePDF(id);
 }
 
-/** Rapport financier et associatif complet. */
+/**
+ * Rapport financier et associatif complet.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : ouvre la fenetre d'impression.
+ * @why Point d'entree unique du bouton "Rapport financier" : synthese caisse,
+ * dettes, prets et mouvements de caisse tiennent sur un meme document.
+ */
 async function exportRapportPDF() {
   await rapportFinancierPDF();
 }
@@ -114,14 +159,18 @@ async function exportRapportPDF() {
  * sous-total par personne est une presentation propre a ces deux ecrans, pas
  * une propriete generale des rapports.
  *
- * @param {object[]} items
- * @param {string} cleGroupe - Champ de regroupement.
+ * @param {object[]} items — lignes a regrouper (dettes ou prets).
+ * @param {string} cleGroupe - Champ de regroupement (ex: "id_membre", "id_debiteur").
  * @param {Function} nomEtSousTitre - (liste) => {nom, sousTitre}
  * @param {Function} montant - (item) => number
  * @param {Function} ligneDetail - (item) => HTML de cellules
  * @param {string[]} entetes - Libelles de colonnes.
  * @param {number[]} [numEnDroite] - Colonnes alignees a droite.
- * @returns {{groupes: object[], html: string}}
+ * @returns {{groupes: object[], html: string}} Les groupes (pour le resume) et le HTML.
+ * @sideEffect Aucun : fonction pure, elle ne fait que transformer des donnees en HTML.
+ * @why Le tri final se fait sur le sous-total decroissant : le tresorier veut
+ * d'abord voir qui doit le plus. Chaque groupe est trie par date croissante,
+ * parce qu'une dette qui vieillit est plus urgente qu'une dette de la semaine.
  */
 function grouperParMembreHTML(
   items,
@@ -132,13 +181,21 @@ function grouperParMembreHTML(
   entetes,
   numEnDroite = [],
 ) {
+  // `groupBy` renvoie une Map ; `Array.from(...values())` la convertit en
+  // tableau pour pouvoir utiliser `map` et `sort` dessus. Le `||` du vide
+  // affiche un message au lieu d'un document sans titre, sinon l'impression
+  // sort une page blanche sans explication.
   const groupes = Array.from(groupBy(items, cleGroupe).values())
     .map((liste) => {
       const { nom, sousTitre } = nomEtSousTitre(liste);
       return {
         nom,
         sousTitre,
+        // `reduce()` additionne les montants du groupe : c'est la somme des
+        // dettes ou des prets d'une meme personne.
         sousTotal: liste.reduce((a, it) => a + montant(it), 0),
+        // `slice()` copie le tableau avant le tri : `sort()` modifie en place
+        // et reordonner ici reordonnerait aussi le tableau d'origine.
         detail: liste.slice().sort((a, b) => (a.date || "").localeCompare(b.date || "")),
       };
     })
@@ -165,6 +222,11 @@ function grouperParMembreHTML(
  * Exporte l'etat des dettes du groupe. Les dettes remboursees sont listees
  * separees des impayees, avec le nom de celui qui a rembourse : c'est
  * l'information qu'un tresorier cherche en premier.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : lit la base, ouvre la fenetre d'impression.
+ * @why Le nom de celui qui a rembourse (`remb_par`) est affiche et non calcule
+ * ici : il vient de `dettesList()`, qui applique la regle de nom fige documentee
+ * dans CLAUDE.md §8 — le nom historique survit a une suppression ou un renommage.
  */
 async function exportDettesPDF() {
   const identite = await pdfIdentite();
@@ -184,6 +246,10 @@ async function exportDettesPDF() {
     [1],
   );
 
+  // Tri decroissant sur la date de remboursement : l'historique se lit du plus
+  // recent au plus ancien. `localeCompare` compare des chaines en respectant
+  // l'ordre alphabétique local ; sur des dates ISO (AAAA-MM-JJ) l'ordre obtenu
+  // est l'ordre chronologique, ce qui evite de parser chaque valeur.
   const soldeesLignes = soldees
     .sort((a, b) => (b.remb_date || "").localeCompare(a.remb_date || ""))
     .map(
@@ -229,11 +295,21 @@ async function exportDettesPDF() {
 
 /**
  * Exporte le suivi des prets personnels entre membres.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : lit la base, ouvre la fenetre d'impression.
+ * @why Un pret est toujours un debiteur et un preteur : on regroupe par
+ * `id_debiteur` (ce qui doit etre rendu) en indiquant le preteur en colonne
+ * detaillee (a qui rendre). L'inverse — regrouper par preteur — describes les
+ * sommes qu'il faut recouvrer, pas les dettes en cours.
  */
 async function exportPretsMembresPDF() {
   const identite = await pdfIdentite();
   const prets = await pretsMembres();
   const membres = await db.membres.toArray();
+  // Index id → membre construit une seule fois : sans lui, chaque pret
+  // declencherait une recherche dans tout le tableau des membres.
+  // `Object.fromEntries` transforme la liste de paires en objet (equivalent d'un
+  // dictionnaire), avec repli sur "?" si l'identifiant est introuvable.
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
   const nomOf = (id) => (memById[id] ? fullName(memById[id]) : "?");
 

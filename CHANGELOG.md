@@ -56,7 +56,7 @@ v38 → v39. Détail complet dans [REFACTORING_REPORT.md](REFACTORING_REPORT.md)
   portent plus de couleur personnalisée (`listes.couleur` et `listes.icone`
   avait déjà été retirés du schéma). La documentation technique le mentionnait
   encore comme protection active : cette version la rectifie.
-  ⚠️ Le rapport financier produit des couleurs en dur via `PDF_COULEURS`, pas
+   Le rapport financier produit des couleurs en dur via `PDF_COULEURS`, pas
   via des valeurs saisies par l'utilisateur — `esc()` reste la seule
   protection XSS à maintenir.
 

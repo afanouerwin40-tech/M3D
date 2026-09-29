@@ -1,7 +1,151 @@
-// db.js — Schema IndexedDB (Dexie) + donnees de depart + requetes derivees
-// Principe : Paiements est la seule source de verite pour l'argent lie aux
-// collectes. Dettes et le volet "collecte" de la Caisse ne sont JAMAIS
-// stockes : ils sont toujours recalcules a la volee depuis Paiements.
+/* ==========================================================================
+ * db.js — COUCHE DONNEES DE L'APPLICATION
+ * ==========================================================================
+ *
+ * POURQUI CE FICHIER EST SPECIAL
+ * ------------------------------
+ * db.js est le SEUL fichier du projet autorisé à parler directement à la base
+ * de données. Aucun autre fichier n'appelle `db.*` directement : les modules
+ * (finances.js, activites.js, dons.js...) appellent les fonctions de db.js,
+ * qui leur renvoie des données déjà assemblées. Cette règle de séparation
+ * s'appelle le "principe de responsabilité unique" : un fichier, une
+ * responsabilité. Si on trifouillait IndexedDB depuis dix fichiers, il
+ * faudrait comprendre dix fois comment les données s'articulent, et le
+ * coquillage d'un bug deviendrait impossible à trouver.
+ *
+ *
+ * 1) POURQUOI IndexedDB ET PAS localStorage
+ * ----------------------------------------
+ * On pourrait stocker les données avec `localStorage.setItem("cle", "valeur")`.
+ * C'est plus simple. Mais localStorage est inadapté ici :
+ *
+ *   - Capacité : localStorage est plafonné à environ 5 Mo. Or ce projet
+ *     stocke des photos de membres en base64 : quelques centaines de photos
+ *     et la limite est atteinte. IndexedDB accepte plusieurs gigaoctets.
+ *   - Nature de la donnée : localStorage ne contient que du texte. Stocker
+ *     un objet necessitates un aller-retour `JSON.parse(localStorage.getItem())`
+ *     a chaque lecture. IndexedDB stocke des objets JavaScript reels, avec
+ *     leurs types (nombres, dates, booleens) preserves.
+ *   - Requetes : localStorage n'a aucun index. Pour trouver "tous les membres
+ *     actifs", il faut TOUT lire puis filtrer en JavaScript. IndexedDB
+ *     possede des index : une requete parcourt directement les enregistrements
+ *     concernes, sans lire le reste. Sur une base de 500 membres et 4 000
+ *     paiements, la difference est de l'ordre de la milliseconde contre
+ *     plusieurs dizaines.
+ *   - Transactions : IndexedDB garantit qu'un groupe d'ecritures est soit
+ *     entierement reussi, soit entierement annule (on parle de propriete
+ *     ACID). Si l'application se ferme au milieu d'une operation, la base ne
+ *     se retrouve pas dans un etat a moitie ecrit. localStorage n'offre rien
+ *     de comparable.
+ *
+ *
+ * 2) POURQUOI Dexie.js
+ * --------------------
+ * IndexedDB est une API native du navigateur, tres puissante mais tres
+ * bavarde : tout se fait par evenements (onSuccess, onerror, onupgradeneeded),
+ * chaque objet doit etre transforme manuellement, les transactions s'ecrivent
+ * avec des callbacks imbriques. Dexie est une fine surcouche qui rend la meme
+ * base accessible comme si on manipulait des tableaux :
+ *
+ *   - await db.membres.toArray()   -> tous les enregistrements, en une ligne
+ *   - await db.membres.get(id)     -> un enregistrement par sa cle
+ *   - await db.membres.add(objet)  -> ajout
+ *   - await db.membres.update(id, patch) -> modification partielle
+ *   - await db.membres.delete(id)  -> suppression
+ *
+ * Dexie gere aussi la partie la plus piegeuse d'IndexedDB : les migrations
+ * (voir la section 3 plus bas). Et elle ajoute des possibilites qu'IndexedDB
+ * n'a pas, comme le "where().equals().toArray()".
+ *
+ * CHOIX DE LIBRAIRIE : Dexie pese environ 20 Ko minifies, tient en UNE
+ * dependance CDN, sans build ni npm. Le projet est"No-Build, Zero Backend" :
+ * on ne peut pas se permettre d'imposer un `npm install` a l'utilisateur.
+ *
+ *
+ * 3) EVENT SOURCING — LE PRINCIPE FONDATEUR DE CE FICHIER
+ * -------------------------------------------------------
+ * "Event sourcing" signifie, litteralement, "les evenements sont la source".
+ * Concretement, dans cette application :
+ *
+ *   - on ne stocke JAMAIS un total, ni un solde, ni un compteur ;
+ *   - on ne stocke que les FAITS ("ce membre a paye 500 F tel jour") ;
+ *   - tous les chiffres affiches a l'ecran sont RECALCULES a partir de ces
+ *     faits, a chaque affichage.
+ *
+ * Concretement, dans la table `paiements` on lit `montant_attendu` et
+ * `montant_paye`, mais on ne trouve nulle part un champ `total_du` ni
+ * `nb_cotisants`. Le total est obtenu par une simple addition :
+ * `paiements.reduce((a, p) => a + p.montant_paye, 0)`.
+ *
+ * Pourquoi ce choix, alors qu'un total stocke serait plus rapide ? Parce
+ * qu'un total stocke peut desynchronise. Trois scenarios rendent le stockage
+ * d'un total dangereux :
+ *   a) un bug dans le code qui met a jour le total au meme endroit que
+ *      l'ecriture -> les deux divergent silencieusement ;
+ *   b) une annee de modification tarifaire (500 F -> 1000 F) : il faut
+ *      recalculer retroactivement des centaines de lignes a la main ;
+ *   c) une migration de schema qui change la signification d'un champ.
+ *
+ * Avec l'event sourcing, ces trois cas se reglent seuls : changer la regle de
+ * calcul suffit. Le cout ? On relit l'historique a chaque affichage. Sur le
+ * volume de ce projet (quelques milliers de lignes), ce cout est invisible ;
+ * sur une base de cinquante millions de lignes, il ne le serait pas. Le
+ * compromis est donc assume, et il est le bon ici.
+ *
+ * Corollaire : des qu'une information peut etre DERIVEE, elle ne doit pas
+ * etre stockee. C'est la regle suivie par `dettesList()` (les dettes sont
+ * recalculees depuis les paiements impayes), par `caisseDetail()` (le solde
+ * est recalcule depuis les mouvements et les paiements) et par `syntheseDons()`.
+ *
+ *
+ * 4) OUVERTURE EXPLICITE DE LA BASE
+ * ---------------------------------
+ * IndexedDB ouvre la base "en tache de fond" : `db.membres.get(...)` marche
+ * sans qu'on ait rien demande, et IndexedDB demarre la connexion tout seul.
+ * Cette commodite est une faute ici. Avec elle :
+ *   - l'application demarre quand meme, et une erreur de schema (version de
+ *     base obsolete, table manquante) ne remonte que trois secondes plus tard,
+ *     depuis un `await` enfoui dans un module, sans indication de sa source ;
+ *   - une base bloquee par un autre onglet laisse `db.open()` en attente
+ *     INDEFINIE : ni resolue, ni rejetee. Sans garde-fou, l'utilisateur reste
+ *     devant un ecran vide, sans le moindre message.
+ *
+ * D'ou `ouvrirBase()`, appele en tete de `start()` dans app.js, AVANT
+ * `seedIfEmpty()` et avant tout affichage. Elle explicite les deux echecs
+ * (blocage et lenteur) et verifie la version du schema. Elle est documentee
+ * plus bas, apres les migrations.
+ *
+ *
+ * 5) CE QUE CONTIENT CE FICHIER, DANS L'ORDRE
+ * -------------------------------------------
+ *   1. en-tete + polyfill de compatibilite Safari ;
+ *   2. creation de l'objet Dexie et schema version 1 ;
+ *   3. migrations versions 2 a 9 (evolution du schema au fil du temps) ;
+ *   4. `ouvrirBase()` — ouverture explicite et controlee ;
+ *   5. utilitaires (groupBy, log, parametres) ;
+ *   6. amorcage et reinitialisations globales ;
+ *   7. requetes derivees : membres, dettes, dons, caisse, calendrier ;
+ *   8. anniversaires, dimanches de collecte, prets, regularite ;
+ *   9. authentification locale (SHA-256 + sel) ;
+ *  10. module Activites : listes, frais, paiements echelonnes ;
+ *  11. rapports (general et individuel).
+ *
+ * Chaque fonction de ce fichier est declaree en `function` (et non
+ * `const f = () => {}`) afin d'etre APPELABLE DEPUIS N'IMPORTE QUELLE PORTEE
+ * et de figurer dans window. C'est ce qui permet a un autre fichier charge
+ * plus tard dans index.html de l'appeler directement par son nom. Le script
+ * de controle `tools/verify-globals.js` verifie que ces identifiants sont
+ * bien accessibles.
+ */
+
+// -----------------------------------------------------------------------------
+// PRINCIPE METIER CENTRAL
+// -----------------------------------------------------------------------------
+// `paiements` est la SEULE source de verite pour l'argent lie aux collectes.
+// Les dettes et le volet "collecte" de la caisse ne sont JAMAIS stockes :
+// ils sont toujours recalcules a la volee depuis `paiements`. Consequence
+// importante : "marquer un paiement paye" ne fait qu'ecrire UNE ligne, et
+// toutes les sommes affichees ailleurs se mettent a jour seules.
 
 // Polyfill Object.fromEntries : cette methode n'existe PAS sur Safari 12.0
 // (elle n'a ete ajoutee qu'en Safari 12.1). Comme certains vieux iPad
@@ -9,6 +153,15 @@
 // si absente, plutot que de faire confiance a la version exacte du WebKit
 // de l'appareil. Utilisee 8 fois dans app.js/db.js -- sans ce polyfill,
 // chaque appel plante avec "Object.fromEntries is not a function".
+//
+// QU'EST-CE QU'UN POLYFILL ? C'est une reimplementation locale d'une
+// fonction qui manque au navigateur, qu'on n'installe que si le navigateur ne
+// la possede pas deja. Le test `typeof X !== "function"` verifie sa presence :
+// sur un navigateur recent, la condition est fausse et le bloc est ignore.
+//
+// NOTE IMPORTANTE : le polyfill doit etre place AVANT tout usage de la
+// fonction, et le nom de la propriete ne doit contenir ni point, ni
+// crochets, sinon l'assignement echoue silencieusement.
 if (typeof Object.fromEntries !== "function") {
   Object.fromEntries = function (entries) {
     var obj = {};
@@ -27,20 +180,242 @@ if (typeof Object.fromEntries !== "function") {
   };
 }
 
+/**
+ * Instance unique de la base, partagee par toute l'application.
+ *
+ * `new Dexie("m3d_db")` cree l'objet gestionnaire, mais n'OUVRE PAS la base : la
+ * connexion est etablie par `ouvrirBase()` (voir plus bas). Le nom "m3d_db"
+ * est definitif : le changer ferait perdre les donnees de tous les
+ * utilisateurs deja installes.
+ *
+ * A quoi sert l'objet `db` ? C'est le point d'acces unique aux tables. Chaque
+ * table declaree dans le schema devient une propriete de `db` :
+ * `db.membres`, `db.paiements`, `db.dons`... Chacune expose les cinq
+ * operations de base : `add`, `get`, `put`, `update`, `delete`, `toArray`,
+ * `where`, `count`, `clear`.
+ */
 const db = new Dexie("m3d_db");
 
+/* ==========================================================================
+ * SCHEMA DE LA BASE — POURQUOI CE LONG BLOC DE TEXTE
+ * ==========================================================================
+ *
+ * `db.version(1).stores({...})` DECRIT la forme de la base. Chaque ligne est
+ * une table, chaque valeur une chaine de caracteres decrivant ses index.
+ *
+ * ANATOMIE D'UNE LIGNE DE SCHEMA
+ *   membres: "id, nom, prenom, statut, mois_anniversaire",
+ *            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+ *            liste de champs, tous indexes, separes par des virgules
+ *
+ * REGLE ABSOLUE DE DEXIE : le PREMIER champ de la liste est la CLE PRIMAIRE
+ * (l'identifiant unique, `"id"` dans cette application). Tous les autres
+ * champs sont des INDEX. Un index permet de faire :
+ *   db.membres.where("statut").equals("Actif").toArray()
+ * ...sans quoi Dexie leve une SchemaError.
+ *
+ * MAIS ATTENTION : un index a un cout. IndexedDB construit un arbre de
+ * tri par index, donc plus on indexe, plus l'ecriture est lente et plus la
+ * base occupe de disque. On n'indexe donc QUE les champs reellement
+ * interroges par `.where()`. C'est pourquoi certaines tables
+ * ci-dessous n'indexent que `id` : leurs autres champs (libelle, montant,
+ * commentaire...) sont lus apres coup, en memoire, une fois la table chargee.
+ *
+ * FORMATAGE : `"id, nom, prenom"` = indexes simples.
+ *            `"++seq, date"` = auto-increment ; `++` devant le nom du champ
+ *                            indique a IndexedDB de generer lui-meme la
+ *                            valeur (1, 2, 3...) et de l'incrementer. Utilise
+ *                            pour le journal d'activite, ou l'ordre de
+ *                            creation est une information en soi.
+ *
+ * REGLE DE NOMMAGE DES TABLES : le pluriel systematise, ce qui permet
+ * d'ecrire `db.<table>.where(...)` sans se tromper de singulier. Les
+ * relations portent le prefixe `id_` : `id_membre` designe le membre
+ * concerne, `id_dimanche` le dimanche de collecte, `id_liste` l'activite.
+ * Ce prefixe est la seule trace du lien : il n'y a PAS de cle etrangere
+ * declaree comme en SQL.
+ */
+
+/**
+ * VERSION 1 — LE SOCLE COMMUN.
+ *
+ * Cette version cree les tables qui n'ont pas evolue depuis le tout debut :
+ * annuaire des membres, sessions annuelles, dimanches de collecte,
+ * anniversaires du jour, paiements, remboursements, mouvements de caisse,
+ * parametres et journal d'activite.
+ *
+ * AUCUNE MIGRATION ICI : `db.version(1)` n'a pas de `.upgrade()`. C'est
+ * normal : la base etant vide au premier lancement, il n'y a rien a
+ * convertir. Le schema est purement declaratif.
+ */
 db.version(1).stores({
+  // --- L'ANNUAIRE ---------------------------------------------------------
+  // Un enregistrement par personne. `id` est de la forme "M-00001"
+  // (format court et lisible, choisi a la main : les identifiants
+  // incrementaux de Dexie n'auraient pas de sens pour des humains).
+  // Champs non indexes mais presents dans l'objet : prenom, telephone,
+  // fonction, photo, jour_anniversaire, cotisation_personnalisee.
+  //   - photo : une data URL base64 (image compressee en JPEG par
+  //     compressImage() dans utils.js). C'est ce qui justifie IndexedDB :
+  //     quelques centaines de photos en base64 depassent vite la limite de
+  //     localStorage.
+  //   - mois_anniversaire / jour_anniversaire : deux entiers separees
+  //     plutot qu'une date complete, car un anniversaire se recite chaque
+  //     annee (le jour ET le mois suffisent, l'annee n'a pas de sens).
+  //   - statut : "Actif" ou "Inactif". Un membre inactif est absent des
+  //     prochains dimanches de collecte.
+  // Index nom / prenom : recherche et tri alphabétique. Index statut :
+  // ecran "Membres actifs". Index mois_anniversaire : calendrier et
+  // echeance d'anniversaires.
   membres: "id, nom, prenom, statut, mois_anniversaire",
+
+  // --- LES SESSIONS ANNUELLES ---------------------------------------------
+  // Une "session" est une annee associative (2026-2027, 2027-2028...).
+  // Les dimanches de collecte y sont rattaches, ce qui permet de consulter
+  // une annee passee sans melanger les exercices. La session courante est
+  // designee par le parametre "session_active" (voir getParam plus bas).
   sessions: "id, nom",
+
+  // --- LES DIMANCHES DE COLLECTE ------------------------------------------
+  // Un enregistrement par dimanche de cotation. C'est l'ENTETE de la
+  // feuille de collecte : c'est elle qui dit quels membres etaient
+  // attendus, pour quel montant, et a qui le cadeau etait destine.
+  //   - id_session : rattache le dimanche a une annee.
+  //   - date : format ISO "AAAA-MM-JJ". Le format ISO est choisi
+  //     deliberement : il se trie lexicographiquement (les chaines se
+  //     comparent dans le meme ordre que les dates reelles), ce qui permet
+  //     de trier par `.sort((a,b) => a.date.localeCompare(b.date))` sans
+  //     convertir en objet Date.
+  //   - statut : "En cours", "Termine"...
   dimanches: "id, id_session, date, statut",
+
+  // --- LES ANNIVERSAIRES DU JOUR ------------------------------------------
+  // Table de jonction : pour un dimanche donne, quels membres sont fetes et
+  // quel cadeau a ete verse. Sans elle, impossible de savoir a qui un
+  // montant de 12 000 F a ete destine. Le champ montant_cadeau est stocke
+  // ici parce qu'il est un FAIT (12 000 F ont ete promis CE dimanche-la),
+  // pas un total a recalculer.
   anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+
+  // --- LES PAIEMENTS : LE COEUR DU SYSTEME -------------------------------
+  // Une ligne par membre et par dimanche. Contient le montant ATTENDU et le
+  // montant PAYE. C'est la seule source de verite de l'argent des collectes :
+  // la caisse, les dettes, les relances, les statistiques, les rapports PDF
+  // en derivent tous.
+  //   - montant_attendu : ce que le membre doit (500 F, ou sa cotisation
+  //     personnalisee, fois le nombre de beneficiaires du dimanche).
+  //   - a_paye : booleen. True = la somme a ete versee.
+  //   - montant_paye : 0 ou montant_attendu. On ne suit volontairement pas
+  //     les paiements partiels sur les cotisations (contrairement au module
+  //     Activites, ou l'historique detaille est enregistre).
+  // Index id_membre et id_dimanche : les deux seules questions que l'on pose
+  // sans cesse ("qu'a paye ce membre ?", "qui doit ce dimanche ?").
   paiements: "id, id_dimanche, id_membre",
+
+  // --- LES REMBOURSEMENTS -------------------------------------------------
+  // Trace qui a floral un membre absent, et pour quel montant. Relie un
+  // membre (id_membre_rembourseur) a un paiement concerne
+  // (id_paiement_concerne). Ce n'est PAS une dette du groupe : c'est un
+  // arrangement personnel entre deux personnes.
+  // Le nom du remboursant est une COPIE figee au moment du
+  // remboursement : si la personne est ensuite renommee ou supprimee,
+  // l'historique affiche ce qu'elle portait a l'epoque plutot que de
+  // perdre l'information.
   remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+
+  // --- LES MOUVEMENTS DE CAISSE -------------------------------------------
+  // Les entrees et sorties SAISIES A LA MAIN (un don en especie, un achat,
+  // un transport...). Les mouvements qui NE sont pas saisis (une cotisation
+  // encaissee) ne sont pas ici : ils sont deduits de `paiements`. Deux
+  // sources, un seul solde.
+  //   - type : "Entree" ou "Sortie".
+  //   - categorie : ajoutee en v8 (voir plus bas).
+  //   - justificatif : photo du ticket, facultative.
   caisse_mouvements: "id, date, type",
+
+  // --- LES PARAMETRES -----------------------------------------------------
+  // Table cle/valeur, ou chaque enregistrement est un reglage de
+  // l'application : `cle: "montant_cotisation_defaut"`, `cle: "admin_hash"`,
+  // `cle: "session_active"`, `cle: "organisation_nom"`...
+  // On ne peut pas mettre des attributs variables sur un objet JavaScript :
+  // pour stocker une liste de reglages de nature variable, une table
+  // cle/valeur est la structure naturelle.
   parametres: "cle",
+
+  // --- LE JOURNAL D'ACTIVITE ---------------------------------------------
+  // Trace horodatee de chaque action : qui (la seule session admin),
+  // quand, quoi, sur quelle entite. Sert a la transparence et a la
+  // reconstruction apres un incident. `++seq` auto-incremente, ce qui
+  // garantit un ordre d'insertion stable meme si deux evenements tombent
+  // dans la meme milliseconde.
   activity_log: "++seq, date, entite, action",
 });
 
+/* ==========================================================================
+ * MIGRATIONS — LE COEUR TECHNIQUE DE CE FICHIER
+ * ==========================================================================
+ *
+ * QU'EST-CE QU'UNE MIGRATION ?
+ * Quand le code ajoute une table ou un index, la base deja installee sur les
+ * telephones des utilisateurs ne peut pas etre modifiee a distance : elle vit
+ * dans leur navigateur. Une migration est le script qui transforme une base
+ * ancienne pour qu'elle corresponde au nouveau code. IndexedDB les declenche
+ * automatiquement a la premiere ouverture, en passant d'une version a la
+ * suivante.
+ *
+ * POURQUOI ON NE SUPPRIME JAMAIS UNE MIGRATION
+ * ---------------------------------------------
+ * Parce qu'un utilisateur peut mettre a jour l'application depuis N'IMPORTE
+ * QUELLE version. Un telephone bloque en v3 et mis a jour en v9 doit
+ * executer, dans l'ordre, les migrations 4, 5, 6, 7, 8 ET 9. Si l'on
+ * supprimait la migration 5, ce telephone passerait de v4 a v6 sans elle, et
+ * la base resterait dans un etat incoherent. De plus, comme il n'y a pas de
+ * serveur, PERSONNE ne peut rejouer une migration effacee par erreur.
+ *
+ * LES TROIS REGLES DE MIGRATION (CLAUDE.md, section 9)
+ * -----------------------------------------------------
+ *   1. TOUJOUR ADDITIVES : on ajoute, on ne supprime ni table ni champ.
+ *   2. IDEMPOTENTES : la migration verifie avant d'agir qu'elle n'a pas
+ *      deja ete executee (une interruption a mi-chemin ne doit pas
+ *      corrompre la base au second essai).
+ *   3. SANS PERTE DE DONNEES : on convertit, jamais on n'efface.
+ *
+ * Pour rediger une migration, la formule est toujours la meme :
+ *   db.version(N).stores({ ...schema complet... })
+ *                    .upgrade(async (tx) => { ... })
+ * Deux points techniques souvent oublies :
+ *   - `.stores()` doit redeclarer le schema EN ENTIER, pas seulement les
+ *     tables nouvelles : IndexedDB remplace la definition, il ne la fusionne
+ *     pas. Oublier une table ici revient a la supprimer.
+ *   - `tx` est l'objet "transaction". A l'interieur d'un `upgrade()`, on
+ *     utilise `tx.table` et non `db.table` : IndexedDB impose de passer par
+ *     la transaction courante, sinon celle-ci se ferme prematurely et les
+ *     ecritures suivantes echouent.
+ */
+
+/**
+ * VERSION 2 — COTISATION PERSONNALISEE.
+ *
+ * Pourquoi elle existe : le President, ATTIDZONOU Eric (M009), cotise
+ * 1000 F au lieu des 500 F par defaut. C'est une EXCEPTION, pas une
+ * nouvelle regle generale.
+ *
+ * Pourquoi le schema est reecrit a l'identique : c'est obligatoire (voir la
+ * regle sur `.stores()` ci-dessus). Il ne change ici que les DONNEES, pas la
+ * structure.
+ *
+ * La migration est idempotente : si `cotisation_personnalisee` est deja
+ * posee, la fonction `return` immediatement. Cela rend un second passage sans
+ * risque.
+ *
+ * Point delicat : la migration corrige aussi les paiements DEJA enregistres
+ * de ce membre. On pourrait s'en passer (les nouveaux dimanches
+ * calculeraient deja le bon montant), mais sans cela sa feuille de collecte
+ * historique afficherait des montants faux, et la somme de son annee
+ * serait erronee. Corriger l'historique vaut mieux que de le laisser
+ * incoherent : on prefere un calcul un peu plus long a un ecart de chiffres
+ * affiche a l'utilisateur.
+ */
 // Version 2 : correction — ATTIDZONOU Eric (M009, President) cotise 1000 F
 // au lieu du montant par defaut de 500 F. On ajoute le champ
 // cotisation_personnalisee sur le membre et on met a jour retroactivement
@@ -88,6 +463,13 @@ db.version(2)
 // non liees aux cotisations d'anniversaire : sorties, reunions, camps...).
 // Aucune table existante n'est modifiee : upgrade additif, sans risque pour
 // les donnees deja presentes.
+//
+// POURQUOI DEUX TABLES ET NON UNE ? Une table "listes" decrirait les
+// activites, une table "liste_membres" les inscriptions. Les mettre dans une
+// seule table obligerait a dupliquer le nom, la date et la description de
+// l'activite sur chaque ligne d'inscription. La separation evite cette
+// duplication et permet de modifier une activite sans toucher a ses
+// participants. C'est la forme "un pour plusieurs".
 db.version(3).stores({
   membres: "id, nom, prenom, statut, mois_anniversaire",
   sessions: "id, nom",

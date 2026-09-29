@@ -1,329 +1,152 @@
-# Architecture Technique — M3D Gestion
+# Architecture du Projet M3D
 
-> Réécrit en v1.9.0. La version précédente décrivait un schéma v6, un service
-> worker v17, et cinq tables (`cotisations`, `depenses`, `presences`,
-> `evenements`, `config`) qui n'existent plus depuis longtemps.
-
-**Version décrite :** 1.9.0 — schéma IndexedDB v9, service worker v39
-
----
-
-## 1. Vision et Principes Directeurs
-
-**M3D Gestion** est une Progressive Web App (PWA) conçue pour la gestion
-administrative, financière, événementielle et pastorale de l'association
-paroissiale de jeunesse **M3D**.
-
-### Principes Clés
-
-1. **Zéro dépendance de build** : aucun transpileur, bundler ni framework. Le
-   projet s'exécute directement dans un navigateur ou derrière n'importe quel
-   serveur statique.
-2. **Offline-First** : la totalité des données vit sur l'appareil, via
-   **IndexedDB** (piloté par Dexie.js 3.2.4). L'application reste opérationnelle
-   sans connexion.
-3. **Souveraineté des données** : pas de backend. Sauvegarde et restauration
-   par export/import JSON.
-4. **Event Sourcing** : aucun total n'est stocké. Les soldes sont recalculés
-   depuis l'historique des paiements à chaque lecture.
-5. **Design System mobile-first** : tokens CSS centralisés, adaptation
-   smartphone / tablette / desktop (>900px) / impression.
+Version : 1.9.0  
+Date : 2026-09-29  
+Schéma DB : v9  
+Service Worker : v39
 
 ---
 
-## 2. Cartographie des Composants
+## 1. Vue d'ensemble
+
+Le projet est une PWA Vanilla JavaScript, sans build, sans framework, 100 % hors ligne. L'architecture est volontairement plate : un seul point d'entrée (`index.html`), un chargement séquentiel de scripts, un seul orchestrateur (`app.js`), des modules par domaine, et une seule base locale (`IndexedDB` via Dexie).
+
+Le choix de Vanilla (sans React / Vue) est un choix de pérénité : le code est directement lisible, il ne dépend pas d'un framework qui peut disparaître, et il fonctionne sans serveur npm/yarn. Le projet est pensé pour durer au-delà des modes techniques.
+
+---
+
+## 2. Ordre de chargement
+
+Le fichier `index.html` charge les scripts dans cet ordre. Cet ordre n'est pas négociable : il garantit que chaque fichier trouve ses dépendances définies au moment où il est chargé.
 
 ```text
-M3D/
-├── index.html                   # Point d'entrée unique, scripts ordonnés
-├── manifest.webmanifest         # Manifest PWA
-├── sw.js                        # Service Worker v39
-├── VERSION                      # Version applicative (1.9.0)
-│
-├── css/
-│   ├── style.css                # Point d'entrée (@import)
-│   ├── variables.css            # Design tokens
-│   ├── base.css                 # Reset, typographie, animations
-│   ├── layout.css               # Topbar, #app, tabbar, FAB
-│   ├── components.css           # Cartes, KPI, tableaux, badges, sheets
-│   └── responsive.css           # >900px, print, anciens navigateurs
-│
-├── js/
-│   ├── config.js         (164)  # Constantes de domaine
-│   ├── utils.js          (404)  # Fonctions pures, échappement XSS, formats
-│   ├── db.js            (2170)  # Couche données — SEUL fichier autorisé à toucher IndexedDB
-│   ├── state.js          (176)  # État global (thème, session, onglet)
-│   ├── ui.js             (226)  # Sheets, toasts, confirmation mot de passe
-│   ├── app.js           (1092)  # Orchestration, routage, modales transverses
-│   │
-│   ├── modules/
-│   │   ├── accueil.js     (97)  # Tableau de bord
-│   │   ├── membres.js    (174)  # Annuaire
-│   │   ├── cotisations.js(102)  # Feuilles de collecte dominicales
-│   │   ├── finances.js   (486)  # Caisse, dettes, prêts entre membres
-│   │   ├── activites.js  (951)  # Activités, frais, calendrier
-│   │   ├── dons.js       (404)  # Dons
-│   │   ├── recherche.js  (116)  # Recherche globale
-│   │   ├── graphiques.js (275)  # Graphiques Canvas
-│   │   ├── exports.js    (277)  # Points d'entrée des exports
-│   │   └── systeme.js    (490)  # Paramètres, sauvegarde/restauration
-│   │
-│   └── services/
-│       └── pdf/
-│           ├── socle.js      (187)  # Feuille de style, en-tête, pied, impression
-│           ├── composants.js ( 80)  # Tableaux, résumés, listes
-│           └── rapports.js   (452)  # Les 5 rapports
-│
-├── tools/                      # Harnais de test Node (aucune dépendance npm)
-│   ├── verify-globals.js       # 118 identifiants globaux attendus
-│   ├── test-dettes.js          # 26 assertions
-│   ├── test-donnees-test.js    # 29 assertions
-│   ├── test-logique.js         # 22 assertions
-│   └── test-pdf.js             # 34 assertions
-│
-├── icons/
-│   ├── icon-192.png
-│   └── icon-512.png
-│
-└── docs/
-    ├── ARCHITECTURE.md         # Le présent document
-    ├── DEVELOPMENT.md          # Guide développeur
-    └── CHANGELOG.md
+1.  Dexie.js (CDN)     → wrapper IndexedDB
+2.  config.js          → constantes métier (MOIS_NOMS, FONCTIONS, ...)
+3.  utils.js           → fonctions pures (fmt, fmtDate, esc, uid, ...)
+4.  db.js              → couche données (Dexie, schéma v9, migrations)
+5.  state.js           → état global (currentTab, activeSessionId, ...)
+6.  ui.js              → composants UI (modales, toasts, confirmations)
+7.  modules/accueil.js → tableau de bord
+8.  modules/membres.js → annuaire
+9.  modules/cotisations.js → collectes hebdomadaires
+10. modules/finances.js → caisse, dettes, prêts
+11. modules/activites.js → activités, calendrier, frais
+12. modules/dons.js → dons
+13. modules/recherche.js → recherche globale
+14. modules/graphiques.js → graphiques Canvas
+15. modules/exports.js → points d'entrée exports PDF / JSON
+16. services/pdf/socle.js → fondations impression (dépend de exports.js)
+17. services/pdf/composants.js → briques de tableau (dépend de socle.js)
+18. services/pdf/rapports.js → 5 rapports (dépend des deux précédents)
+19. modules/systeme.js → système, sauvegarde, paramètres
+20. app.js             → orchestrateur (tous les modules)
 ```
 
-**Total : 8 323 lignes de JavaScript réparties sur 19 fichiers de production.**
+Le Service Worker (`sw.js`) est enregistré dans `app.js` via `navigator.serviceWorker.register()`. Il ne dépend d'aucun module en particulier, mais il doit connaître la liste des fichiers à mettre en cache (`ASSETS[]`). Toute modification d'un fichier doit être accompagnée d'une mise à jour de cette liste et du `CACHE_NAME`.
 
-`app.js` faisait 3 657 lignes avant la v1.9.0. Le découpage par domaine a
-été livré ; le détail est dans [REFACTORING_REPORT.md](../REFACTORING_REPORT.md).
-
-**Routage des onglets** — la barre de navigation est écrite directement dans
-`index.html` (boutons `.tab` avec `data-tab`), et `showTab(tab)` dans
-`app.js` aiguille sur cinq écrans : `accueil`, `membres`, `dimanche`,
-`finance`, `activites`. `dons`, `cotisations` et `calendrier` sont des
-sous-écrans, accessibles depuis `activites` ou `finance` via un bouton retour.
-
-> ⚠️ `TABS` dans `config.js` annonce encore l'ancienne barre
-> (`accueil, membres, dimanche, dettes, plus`) alors que l'interface en compte
-> cinq autres. Cette constante est **du code mort** : elle n'est référencée
-> nulle part. La navigation réelle est pilotée par le HTML. À supprimer, ou à
-> remplacer par une source de vérité unique — mais pas les deux, sinon elles
-> divergeront à nouveau.
+Le terme `CACHE_NAME = "m3d-cache-v39"` est la version du cache du navigateur : après chaque modification des fichiers, il doit être incrémenté (`v40`, `v41`, ...) pour que le navigateur serve la nouvelle version et non l'ancienne en cache.
 
 ---
 
-## 3. Ordre de Chargement et Dépendances
+## 3. Séparation des responsabilités
 
-Les scripts sont chargés séquentiellement dans `index.html`. Il n'y a pas de
-modules ES : tout est dans le scope global, et l'ordre détermine ce qui est
-résolvable au chargement.
+Chaque fichier a un rôle unique et documenté :
 
-```text
-Dexie 3.2.4 (CDN)
-  → config.js
-  → utils.js
-  → db.js
-  → state.js
-  → ui.js
-  → modules/accueil.js
-  → modules/membres.js
-  → modules/cotisations.js
-  → modules/finances.js
-  → modules/activites.js
-  → modules/dons.js
-  → modules/recherche.js
-  → modules/graphiques.js
-  → modules/exports.js
-  → services/pdf/socle.js        ← après exports.js
-  → services/pdf/composants.js
-  → services/pdf/rapports.js
-  → modules/systeme.js
-  → app.js
-```
+- `config.js` : aucune logique, uniquement des constantes (noms des mois, fonctions possibles, catégories de dépense).
+- `utils.js` : fonctions pures, sans effet de bord (pas d'accès au DOM, pas d'accès à la base).
+- `db.js` : seul fichier qui touche `IndexedDB` directement. Tout accès aux données passe par lui.
+- `state.js` : seul fichier qui modifie l'état global (`currentTab`, `activeSessionId`, `currentTheme`, ...).
+- `ui.js` : composants réutilisables, indépendants des données.
+- `modules/*` : logique métier par domaine. Aucune logique métier dans `app.js`.
+- `services/pdf/*` : production de documents. Ne lit jamais `IndexedDB` directement (pas besoin : les données sont passées en paramètre).
+- `app.js` : orchestration uniquement. Aucune logique métier lourde.
 
-### La seule dépendance d'ordre qui compte
+Le principe de **séparation** signifie que si un fichier change, il ne doit affecter que son propre domaine. Par exemple, une modification du calendrier dans `activites.js` ne doit pas toucher `app.js`, sauf si le nom de la fonction appelée change.
 
-`exports.js` **précède** `services/pdf/socle.js`, parce que le socle appelle
-`openPrintableWindow()`, définie dans `exports.js`. Inverser les deux ne
-provoquerait pas d'erreur — l'appel est résolu à l'exécution, pas au
-chargement — mais le code serait trompeur pour qui le lirait.
-
-### Responsabilités par Module
-
-| Module | Rôle | Dépendances |
-| :--- | :--- | :--- |
-| **`config.js`** | Constantes de domaine : mois, statuts, types, libellés de l'onglet. | Aucune |
-| **`utils.js`** | Fonctions pures : `esc()`, `fmt()`, `fmtDate()`, `uid()`, `fullName()`, compression d'image via Canvas, téléchargement de fichier. | `config.js` |
-| **`db.js`** | Schéma Dexie (v1→v9), migrations, ouverture explicite, requêtes métier. | Dexie, `config.js`, `utils.js` |
-| **`state.js`** | Onglet actif, session annuelle, thème (localStorage), verrouillage 30 min. | `config.js` |
-| **`ui.js`** | `openSheet()`, `closeSheet()`, `toast()`, `confirmWithPassword()`. | `utils.js`, `config.js`, `state.js` |
-| **`modules/*`** | Logique métier par domaine. | `db.js`, `utils.js`, `config.js` |
-| **`services/pdf/*`** | Production documentaire. `socle.js` ne fait qu'un seul point d'injection HTML. | `exports.js` pour l'ouverture de fenêtre |
-| **`app.js`** | Routage des onglets, gestionnaires globaux, modales transverses, `start()`. | Tous |
+Le terme **dépendance** signifie : le fichier A a besoin du fichier B au chargement. Si B n'est pas chargé, A ne peut pas fonctionner. C'est pourquoi l'ordre dans `index.html` est fixe.
 
 ---
 
-## 4. Modèle de Données (IndexedDB / Dexie v9)
+## 4. Les modules (détail par domaine)
 
-Base : **`m3d_db`**. Le nom ne doit jamais changer — le changer ferait perdre
-les données de tous les utilisateurs.
+Chaque module suit le même modèle :
 
-### Diagramme
+1. Un bloc `@file` en haut du fichier (nom, rôle, entrées, sorties, choix de conception) ;
+2. Des fonctions documentées (`@param`, `@returns`, `@sideEffect`, `@why`) ;
+3. Un objet `window.<module>Module` publié en bas du fichier, pour que `app.js` puisse l'utiliser sans connaître le nom des fonctions internes.
 
-```mermaid
-erDiagram
-    sessions ||--o{ dimanches : "contient"
-    dimanches ||--o{ paiements : "attendus"
-    dimanches ||--o{ anniversaires_du_jour : "celebre"
-    membres ||--o{ paiements : "verse"
-    paiements ||--o| remboursements : "solde par"
-    membres ||--o{ remboursements : "debiteur"
-    membres ||--o{ prets_membres : "emprunte"
-    membres ||--o{ liste_membres : "participe"
-    membres ||--o{ liste_paiements : "paye"
-    membres ||--o{ dons : "fait"
-    listes ||--o{ liste_membres : "inscrit"
-    listes ||--o{ liste_frais : "comporte"
-    listes ||--o{ liste_paiements : "encaisse"
-    listes ||--o{ dons : "beneficie"
-```
+Le modèle `window.accueilModule = { ... }` est le mécanisme d'export du projet (sans module `export` puisque le projet n'utilise pas un bundler). Chaque module publie un objet unique, dont le nom est le nom du fichier précédé du nom du module. Cela évite les collisions de noms dans le navigateur.
 
-### Les 15 tables
-
-| Table | Contenu | Remarque |
-| :--- | :--- | :--- |
-| `membres` | Annuaire : nom, prénom, téléphone, fonction, statut, photo, anniversaire, cotisation personnalisée. | |
-| `sessions` | Sessions annuelles pastorales. | |
-| `dimanches` | Jours de collecte, rattachés à une session. | |
-| `anniversaires_du_jour` | Anniversaires fêtés un dimanche donné. | |
-| `paiements` | Ligne attendue pour un membre à un dimanche. | `montant_paye` est recalculé, pas la source de vérité |
-| `remboursements` | Solde d'une dette : qui, quand, pour qui. | `nom_rembourseur` figé (voir §6) |
-| `caisse_mouvements` | Journal des entrées et sorties. | |
-| `dons` | Dons de montant libre, membre + activité facultative. | **v9** |
-| `parametres` | Préférences : session active, nom de l'organisation, hash du mot de passe. | Clé = `cle` |
-| `activity_log` | Journal d'activité (`++seq`). | |
-| `listes` | Activités : nom, date, heure, lieu, responsable, budget, type, clôture. | Ni couleur ni icône |
-| `liste_membres` | Participants d'une activité. | |
-| `liste_frais` | Frais modulaires d'une activité. | |
-| `liste_paiements` | Historique des encaissements d'une activité. | |
-| `prets_membres` | Prêts entre membres. | |
-
-### Évolution du schéma
-
-`v1` membres/sessions/dimanches/paiements → `v2` cotisation personnalisée →
-`v3` listes → `v4` prêts → `v5` index `id_paiement` manquant → `v6` activités
-multi-frais → `v7` métadonnées d'événements → `v8` catégories de dépenses →
-**`v9` dons**.
-
-Les migrations sont **additives, idempotentes et non destructives**. Une
-migration déployée ne se modifie jamais : on en ajoute une nouvelle.
-
-### Ouverture explicite
-
-Dexie ouvre la base **en tâche de fond** si on ne l'appelle pas. L'application
-démarre alors quand même, et une erreur de schéma remonte trois secondes plus
-tard, sans localisation. `ouvrirBase()` attend donc explicitement
-l'ouverture, avec un délai de 10 s (une base bloquée par un autre onglet
-resterait sinon en attente indéfinie), puis compare `db.verno` à
-`SCHEMA_VERSION`.
+Le terme **injection de dépendances** signifie : au lieu d'appeler directement `openARelancerSheet`, la fonction `construireAuJourdhuiItems` la reçoit en paramètre. Cela permet de tester la fonction sans le navigateur, en passant des fonctions factices.
 
 ---
 
-## 5. Architecture CSS et Design System
+## 5. Base de données
 
-Découpage inspiré d'ITCSS (Inverted Triangle CSS) :
+Le nom de la base (`m3d_db`) ne doit jamais changer : le changer ferait perdre toutes les données des utilisateurs. Le schéma (`SCHEMA_VERSION = 9`) est la version du code qui correspond au contenu de la base.
 
-1. **`variables.css`** — tokens : palette, rayons, ombres, transitions, espacements. Le thème sombre bascule via `[data-theme="dark"]`.
-2. **`base.css`** — reset, typographie (`Inter`), animations.
-3. **`layout.css`** — `#app`, `header.topbar`, `nav.tabbar` fixe, FAB.
-4. **`components.css`** — cartes, KPI, tableaux, badges, bottom-sheets, formulaires.
-5. **`responsive.css`** — >900px (menu latéral, conteneurs centrés), `safe-area-inset` iOS, styles d'impression.
+Chaque table a un nom (clé primaire, index) et un rôle. Les 15 tables sont définies dans `CLAUDE.md` (§8) et dans `docs/BASE_DE_DONNEES.md`.
 
-La couleur d'accent est le **terracotta `#C4714A`**. Elle a été appliquée au
-socle PDF en v1.9.0, alors que les exports utilisaient encore un indigo
-`#6366F1` qui ne ressemblait pas à l'application d'où il venait.
+Le terme **index** désigne un champ sur lequel on peut filtrer rapidement (par exemple, `id_dimanche` dans `paiements`). Sans index, chaque recherche parcourrait toute la table.
+
+Le terme **migration** désigne le code qui transforme la base d'une version ancienne (`v8`) vers une nouvelle (`v9`). Une migration doit être idempotente (elle vérifie si déjà appliquée) et ne doit jamais supprimer une table historique.
 
 ---
 
-## 6. Sécurité Frontend
+## 6. Authentification
 
-### Prévention du XSS
+Le mot de passe administrateur est stocké sous forme de hash SHA-256 avec un sel (`salt`). Quand l'utilisateur tape son mot de passe, le logiciel calcule le hash du mot combiné au sel et le compare au hash stocké. Le mot de passe en clair n'est jamais enregistré.
 
-Toute donnée textuelle issue de l'utilisateur ou de la base passe par `esc()`
-avant interpolation HTML :
+Le flux d'authentification est documenté dans `CLAUDE.md` (§10) : saisie du mot de passe → validation (`verifyAdminPassword`) → création de la session (`setSessionAuthed`) → verrouillage automatique après 30 minutes (`verrouillerSiExpire`).
 
-```javascript
-function esc(valeur) {
-  return String(valeur ?? "")
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#039;");
-}
-```
-
-**Y compris dans la fenêtre d'impression.** C'était le trou oublié jusqu'en
-v1.9.0 : `writePrintableDocument()` injectait le titre du document sans
-échappement, si bien qu'un nom d'activité contenant `</title><script>`
-s'exécutait dans la fenêtre d'impression. La fonction a été supprimée et
-remplacée par `pdfDocumentComplet()`, qui applique `esc()` à l'organisation
-comme au titre.
-
-`safeColor()` a disparu avec les couleurs personnalisées des activités. Les
-couleurs des exports proviennent de `PDF_COULEURS`, des valeurs en dur, jamais
-saisies par l'utilisateur.
-
-### Mot de passe administrateur
-
-- SHA-256 + salt unique, stocké dans `parametres`, **jamais en clair**.
-- Les actions sensibles (import écrasant, réinitialisation) passent par
-  `confirmWithPassword()`.
-- Verrouillage automatique après 30 minutes d'inactivité.
-
-### Traitement des médias
-
-Les photos de membres sont décodées, redimensionnées (320 px max) et
-ré-encodées en JPEG compressé via `<canvas>`, côté client.
-
-### Limites assumées
-
-- **IndexedDB n'est pas chiffrée.** Un appareil compromis donne les données en
-  clair. Protection anti-manipulation, pas sécurité militaire.
-- **Aucun multi-utilisateur**, aucun mot de passe récuprable : l'application
-  est pure hors-ligne.
-- **Les noms complets ne sont pas anonymisés.** L'anonymisation après N mois a
-  été écartée en connaissance de cause ; les exports PDF contiennent les noms
-  réels.
-- Ne pas y stocker de données ultra-sensibles (mots de passe tiers, IBAN).
-- Les sauvegardes JSON contiennent toutes les données : lieu sûr, pas cloud
-  public.
+Le terme **session** désigne ici deux choses : le `sessionStorage` (la zone de stockage du navigateur qui se vide à la fermeture de l'onglet) et la variable `sessionId` (l'identifiant de la session annuelle active dans la base, stocké dans `parametres`).
 
 ---
 
-## 7. Cycle de Vie PWA et Service Worker
+## 7. PWA et Service Worker
 
-- **Stratégie Cache First avec réactualisation en arrière-plan** : l'app répond
-  depuis `m3d-cache-v39`.
-- **Conséquence en développement** : le navigateur sert la copie en cache et
-  ne réactualise qu'en arrière-plan. Un simple rechargement peut donc servir
-  l'ancien fichier — d'où le `Ctrl+Shift+R` ou la désinstallation du service
-  worker dans DevTools.
-- `ASSETS[]` doit contenir tout nouveau fichier, y compris
-  `./js/services/pdf/*.js`. Un asset absent du tableau n'est jamais mis en
-  cache et échoue en mode hors-ligne.
-- **iOS** : métadonnées `apple-mobile-web-app-*` en complément du manifest.
+Le Service Worker (`sw.js`) met en cache tous les fichiers de l'application (`ASSETS[]`). Après le premier chargement, l'application fonctionne sans connexion : le navigateur sert la copie en cache (`Cache First`) et met à jour en arrière-plan (`Stale While Revalidate`).
+
+Le terme **Stale While Revalidate** signifie : le navigateur sert la copie en cache immédiatement, et en même temps demande au serveur (ou au cache) s'il y a une nouvelle version. L'utilisateur voit la page tout de suite, et la mise à jour arrive en arrière-plan.
+
+Le terme **`skipWaiting`** est une option du Service Worker qui force l'activation immédiate du nouveau worker (plutôt que d'attendre que tous les onglets soient fermés). C'est nécessaire pour que la nouvelle version du cache soit active tout de suite.
+
+Le terme **`clients.claim`** signifie que le Service Worker prend le contrôle de la page immédiatement, même si elle avait déjà été chargée avant l'activation du worker.
 
 ---
 
-## 8. Sauvegarde et restauration
+## 8. PDF et impression
 
-`exportBackup()` sérialise les tables listées dans `TABLES_APPLICATION`
-(`modules/systeme.js`). Cette liste est **figée** et **volontairement
-explicite** : une table absente est **silencieusement perdue** dans la
-sauvegarde, sans le moindre message.
+Le pipeline PDF est : données → préparation (`rapports.js`) → mise en page (`socle.js`) → brique de tableau (`composants.js`) → fenêtre d'impression (`exports.js` → `openPrintableWindow()`).
 
-> Toute nouvelle table ajoutée à `db.js` doit être ajoutée à
-> `TABLES_APPLICATION` dans le même changement.
+Le document imprimé est du HTML injecté dans une fenêtre (`window.open()`), pas un PDF natif. Le navigateur imprime cet HTML avec le style `PDF_COULEURS` (palette terracotta). C'est un choix délibéré : le navigateur sait déjà imprimer, et cela évite d'ajouter une bibliothèque PDF lourde.
 
-L'import valide la structure avant écriture et demande le mot de passe
-administrateur.
+Le terme **`esc()`** (échappement) est la protection contre le XSS : avant d'injecter un nom, un titre, ou un commentaire dans le HTML, on remplace `<` par `&lt;`, `>` par `&gt;`, `"` par `&quot;`, `&` par `&amp;`. C'est obligatoire, même dans le `<title>` du document imprimé.
+
+Le terme **`openPrintableWindow`** est le seul point d'ouverture d'une fenêtre d'impression. Il est défini dans `exports.js` et appelé par `services/pdf/socle.js`. Ce n'est pas un hasard : cela garantit que tout document imprimé passe par le même mécanisme.
+
+---
+
+## 9. Tests
+
+Le projet a 111 assertions (26 + 29 + 22 + 34), sans aucune dépendance npm. Les tests tournent à la main (`node tools/test-*.js`). Ils simulent la base (`Dexie` simulé), le DOM (`jsdom`), et les modules (chargés dans l'ordre via le module `vm` de Node).
+
+Le fichier `verify-globals.js` compare la liste des 118 identifiants attendus (`identifiants-attendus.txt`) avec ce qui est réellement accessible après le chargement de tous les scripts. Si un identifiant est ajouté ou supprimé, le fichier de référence doit être mis à jour.
+
+Le terme **`vm`** (Virtual Machine) est le module Node qui exécute du code dans un contexte isolé. C'est ce qui permet de simuler le chargement du navigateur sans l'ouvrir.
+
+---
+
+## 10. Décisions techniques clés
+
+- **Vanilla JS** : pas de build, pas de dépendance à un framework, le code est directement lisible et durable.
+- **IndexedDB via Dexie** : standard Web, capacité de plusieurs Go, transactions ACID, requêtes avec index.
+- **Event Sourcing** : aucun total stocké, tout recalculé depuis l'historique, cohérence garantie.
+- **No Build** : pas de `package.json`, pas d'installateur. Les fichiers sont chargés directement dans le navigateur.
+- **Pas de `.gitignore`** : les sauvegardes JSON exportées par l'application sont des données réelles et ne doivent pas être ignorées par Git (le dépôt doit les conserver, même si elles sont des données et non du code).
+
+Le terme **ACID** (Atomic, Consistent, Isolated, Durable) décrit les garanties d'une transaction de base de données : soit tout est fait, soit rien n'est fait ; la base reste cohérente même si plusieurs utilisateurs la lisent en même temps ; et les données sont conservées même après une coupure de courant.
+
+---
+
+*Document mis à jour dans le cadre de la documentation pédagogique du projet M3D, v1.9.0, 2026-09-29.*

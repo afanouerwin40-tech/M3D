@@ -10,6 +10,22 @@
  *
  * La saisie et la modification passent toujours par une modale dédiée
  * (`openDonForm`) : la fiche d'activité ne fait qu'y renvoyer.
+ *
+ * Communication :
+ * - Entrées : la table `dons` (schéma v9) via `donsList` / `creerDon` /
+ *   `modifierDon` / `supprimerDon`, et les activités via `listesAll`.
+ * - Sorties : du HTML injecté dans la zone `#app` ou dans la fiche d'activité,
+ *   et le rapport PDF via `rapportDonsPDF` (qui reprend les filtres affichés).
+ *
+ * Choix de conception :
+ * - Filtrage et tri vivent dans des variables de module (`donsQuery`,
+ *   `donsFiltreActivite`...) plutôt que dans le DOM : `donsFiltrer` reste ainsi
+ *   testable sans navigateur.
+ * - Le filtrage est refait en JavaScript, pas en SQL : le volume de dons d'une
+ *   association tient largement en mémoire, et l'export PDF doit reproduire
+ *   exactement ce que l'écran affiche — une seule source de vérité.
+ * - Aucune quantité de don n'est stockée agrégée : tout est recalculé depuis
+ *   l'historique (règle d'event sourcing appliquée à tout le projet).
  */
 
 // ---------------------------------------------------------------------------
@@ -39,15 +55,28 @@ let donsTriDesc = true;
  *
  * @param {Array<object>} lignes - Résultat de `donsList`.
  * @returns {Array<object>} Lignes filtrées puis triées.
+ * @sideEffect Aucun : fonction pure, elle ne touche ni au DOM ni à la base.
+ * @why Le filtre d'activité accepte trois états, d'où le test à deux branches :
+ * `null` = pas de filtre, `""` = dons généraux uniquement, sinon un id précis.
+ * La comparaison des dates se fait par comparaison de chaînes ISO, ce qui est
+ * équivalent à un tri chronologique et évite toute conversion en Date.
  */
 function donsFiltrer(lignes) {
   const q = donsQuery.trim().toLowerCase();
 
+  // `filter()` renvoie un nouveau tableau des seuls éléments pour lesquels la
+  // fonction de test est vraie. Enchaîner plusieurs `return false` revient à
+  // dire « cette ligne ne correspond pas », sans structure if imbriquée.
   let out = lignes.filter((d) => {
     if (donsFiltreActivite !== null && (d.id_activite || "") !== donsFiltreActivite)
       return false;
+    // `|| ""` évite qu'une date absente soit comparée à `undefined` : les bornes
+    // ne s'appliquent que si l'utilisateur en a saisi une.
     if (donsDu && (d.date || "") < donsDu) return false;
     if (donsAu && (d.date || "") > donsAu) return false;
+    // Recherche vide : tout passe, inutile de comparer aux trois champs.
+    // `includes()` est une recherche de sous-chaîne, sensible à la casse d'où
+    // le `toLowerCase()` appliqué à la fois à la requête et au champ testé.
     if (!q) return true;
     return (
       (d.donateur || "").toLowerCase().includes(q) ||
@@ -56,6 +85,11 @@ function donsFiltrer(lignes) {
     );
   });
 
+  // Un seul comparateur sert les deux tris : `sens` vaut -1 pour l'ordre
+  // décroissant et +1 pour l'ordre croissant. On multiplie le résultat par ce
+  // signe plutôt que d'écrire deux comparateurs. La comparaison de date est
+  // lexicographique sur le format ISO (AAAA-MM-JJ), ce qui équivaut au tri
+  // chronologique sans conversion en objet Date.
   const sens = donsTriDesc ? -1 : 1;
   out.sort((a, b) => {
     if (donsTri === "montant") return ((a.montant || 0) - (b.montant || 0)) * sens;
@@ -70,6 +104,11 @@ function donsFiltrer(lignes) {
  * @param {HTMLSelectElement} sel - Élément à remplir.
  * @param {string} valeur - Valeur actuellement sélectionnée.
  * @param {string} [labelTous] - Libellé de l'option « pas de filtre ».
+ * @returns {Promise<void>}
+ * @sideEffect Oui : remplace le `innerHTML` du sélecteur.
+ * @why Le libellé de l'option « toutes » est paramétré car l'écran global dit
+ * « Toutes les activités » et le formulaire de saisie dit « Aucune » : deux
+ * usages différents pour la même liste, un seul appel de fonction.
  */
 async function donsRemplirSelectActivites(sel, valeur, labelTous = "Toutes les activites") {
   const listes = await listesAll({});
@@ -91,7 +130,10 @@ async function donsRemplirSelectActivites(sel, valeur, labelTous = "Toutes les a
  * activité — ambiguïté qui se paie cher en assemblée.
  *
  * @param {string|null} idActivite - Filtre actif, "" = dons généraux, null = tous.
- * @returns {Promise<string>}
+ * @returns {Promise<string>} Le titre à inscrire en tête du document.
+ * @sideEffect Aucun sur les données : lit une activité pour connaître son nom.
+ * @why Le repli sur « Rapport des dons » plutôt qu'une erreur : une activité
+ * supprimée entre l'affichage et l'impression ne doit pas faire échouer l'export.
  */
 async function buildDonsExportTitle(idActivite) {
   if (idActivite === null || idActivite === undefined) return "Rapport des dons";
@@ -109,7 +151,12 @@ async function buildDonsExportTitle(idActivite) {
  *
  * @param {object} d - Ligne issue de `donsList`.
  * @param {boolean} [actions] - Affiche les boutons modifier/supprimer.
- * @returns {string}
+ * @returns {string} Le HTML d'une ligne.
+ * @sideEffect Aucun : ne fait que produire une chaîne HTML.
+ * @why L'identifiant est recopié en attribut `data-don` et `data-don-edit` /
+ * `data-don-del` : la délégation d'événements s'appuie sur ces attributs plutôt
+ * que sur des gestionnaires posés à la construction, ce qui évite d'avoir à
+ * rebrancher la liste à chaque re-rendu.
  */
 function donLigneHTML(d, actions = true) {
   return `
@@ -129,6 +176,11 @@ function donLigneHTML(d, actions = true) {
  *
  * @param {ParentNode} racine - Conteneur des lignes.
  * @param {Function} apres - Callback rejoué après modification/suppression.
+ * @returns {void}
+ * @sideEffect Oui : attache des écouteurs aux boutons du conteneur.
+ * @why `querySelectorAll` renvoie un NodeList, qui possède bien `forEach`
+ * dans les navigateurs supportés ; l'ajout de `onclick` inline est évité
+ * précisément parce qu'il mélange données et comportement dans le HTML.
  */
 function donLignesBrancher(racine, apres) {
   racine
@@ -148,6 +200,11 @@ function donLignesBrancher(racine, apres) {
  *
  * @param {string} id - Identifiant du don.
  * @param {Function} apres - Callback de rafraîchissement.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : supprime la donnée en base et affiche un toast.
+ * @why `confirmWithPassword` et non une confirmation simple : supprimer un don
+ * retire une recette de l'historique comptable, action qui doit être faite
+ * sciemment. `if (!ok) return` abandonne sans rien écrire.
  */
 async function supprimerDonDepuisUI(id, apres) {
   const ok = await confirmWithPassword(
@@ -169,9 +226,17 @@ async function supprimerDonDepuisUI(id, apres) {
  * @param {string|null} [idActivite] - Activité pré-sélectionnée.
  * @param {string|null} [idDon] - Don à modifier, ou null pour une création.
  * @param {Function} [apres] - Callback de rafraîchissement.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : ouvre une modale, écrit en base à la validation.
+ * @why Une seule fonction sert la création et la modification : le formulaire
+ * est identique, seule la présence de `existant` change le titre, les valeurs
+ * pré-remplies et l'appel créé/modifié à la fin. Dupliquer les deux formulaires
+ * ferait diverger les règles de validation.
  */
 async function openDonForm(idActivite, idDon, apres) {
   const existant = idDon ? await db.dons.get(idDon) : null;
+  // `actifsSeulement: false` : un don peut venir d'un membre devenu inactif.
+  // L'exclure de la liste empêcherait de corriger ou voir un don existant.
   const membres = await listMembres({ actifsSeulement: false });
   const listes = await listesAll({});
 
@@ -182,6 +247,10 @@ async function openDonForm(idActivite, idDon, apres) {
     )
     .join("");
 
+  // Note : seule l'activité d'un don déjà enregistré est pré-sélectionnée.
+  // Pour une création, c'est « Aucune » qui est proposé, même si l'appelant a
+  // fourni `idActivite` : le champ reste à confirmer explicitement par
+  // l'utilisateur plutôt que pré-rempli à l'aveugle.
   const activiteOptions = [
     `<option value=""${!existant || !existant.id_activite ? " selected" : ""}>Aucune (don general)</option>`,
     ...listes.map(
@@ -227,6 +296,9 @@ async function openDonForm(idActivite, idDon, apres) {
     const commentaire = /** @type {HTMLInputElement} */ (ov.querySelector("#dn_commentaire")).value;
 
     const m = Math.round(Number(montant));
+    // `Number.isFinite()` exclut `NaN`, `Infinity` et `-Infinity` : toutes
+    // ces valeurs sont le résultat d'une saisie corrompue ou d'une division
+    // par zéro, et ne doivent jamais être enregistrées comme montant de don.
     if (!Number.isFinite(m) || m <= 0) {
       toast("Le montant doit etre un nombre superieur a zero.", "error");
       return;
@@ -240,6 +312,10 @@ async function openDonForm(idActivite, idDon, apres) {
       return;
     }
 
+    // `try/catch` : toute écriture en base peut échouer (quota disque plein,
+    // transaction interrompue). L'erreur est transformée en message lisible
+    // et la modale reste ouverte, ce qui permet de corriger et réessayer
+    // sans ressaisir le formulaire.
     try {
       if (existant) {
         await modifierDon(existant.id, { montant: m, id_membre, id_activite, date, commentaire });
@@ -266,6 +342,11 @@ async function openDonForm(idActivite, idDon, apres) {
  *
  * @param {string} idActivite - Identifiant de l'activité.
  * @param {HTMLElement} cible - Conteneur dans la fiche (id `ld_dons`).
+ * @returns {Promise<void>}
+ * @sideEffect Oui : remplace le contenu de `cible`.
+ * @why Le total affiché vient de `syntheseDons` et non d'un cumul stocké :
+ * il se recalcule à chaque ouverture, donc jamais désynchronisé d'un don ajouté
+ * ou supprimé ailleurs dans l'application.
  */
 async function renderDonsActivite(idActivite, cible) {
   if (!cible) return;
@@ -295,6 +376,13 @@ async function renderDonsActivite(idActivite, cible) {
 /**
  * Rend l'écran global de consultation de tous les dons.
  * Accessible depuis le hub Activités, à côté de Listes et Calendrier.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : injecte le HTML dans la zone `#app` et attache les
+ * gestionnaires de tous les contrôles de l'écran.
+ * @why Un seul `innerHTML` pour l'écran entier : les compteurs sont initialisés
+ * à "--" puis remplis par `renderDonsListe`, ce qui évite deux écritures DOM
+ * successives au chargement. Les valeurs de filtre viennent des variables de
+ * module, donc revenir sur cet onglet restitue la dernière recherche.
  */
 async function renderDons() {
   app.innerHTML = `
@@ -337,10 +425,16 @@ async function renderDons() {
   });
   document.getElementById("donsTriChip").addEventListener("click", () => {
     // Bascule date <-> montant, en conservant le sens pour la nouvelle clé.
+    // Le sens est forcé à décroissant : après un changement de critère, un
+    // ordre croissant « par surprise » (trié par date croissante alors qu'on
+    // était au montant décroissant) ferait perdre le repère visuel.
     donsTri = donsTri === "date" ? "montant" : "date";
     donsTriDesc = true;
     renderDons();
   });
+  // Réinitialisation : toutes les variables de filtre reviennent à leur valeur
+  // initiale en un seul endroit, sinon il faudrait les remettre à zéro une à une
+  // à chaque évolution de l'écran.
   document.getElementById("donsReset").addEventListener("click", () => {
     donsQuery = "";
     donsFiltreActivite = null;
@@ -360,12 +454,17 @@ async function renderDons() {
       au: donsAu,
       titre: buildDonsExportTitle(donsFiltreActivite),
     }).catch((err) => {
+      // `rapportDonsPDF` est asynchrone : sans `catch`, une erreur de
+      // génération produirait un rejet de promesse non traité, invisible
+      // pour l'utilisateur (rien ne se passe à l'écran).
       console.error("[M3D] Export des dons impossible.", err);
       toast("Export impossible", "error");
     });
   });
 
   const selActivite = /** @type {HTMLSelectElement} */ (document.getElementById("donsFiltreActivite"));
+  // Le remplissage attend la base : `await` suspend ici le temps que la liste
+  // des activités arrive, l'utilisateur ne peut pas encore filtrer de toute façon.
   await donsRemplirSelectActivites(selActivite, donsFiltreActivite === null ? "" : donsFiltreActivite);
   selActivite.addEventListener("change", (e) => {
     const v = /** @type {HTMLSelectElement} */ (e.target).value;
@@ -381,6 +480,11 @@ async function renderDons() {
  * Recharge la liste filtrée et les compteurs de l'écran global des dons.
  * N'ébranle pas les contrôles : seul le corps de liste est remplacé, ce qui
  * évite de perdre le focus de saisie pendant la frappe.
+ * @returns {Promise<void>}
+ * @sideEffect Oui : met à jour les trois compteurs et la liste.
+ * @why Les trois compteurs sont mis à jour sur `textContent` et non dans le
+ * `innerHTML` de l'écran : seule la liste est reconstruite, la saisie en cours
+ * n'est pas interrompue à chaque frappe dans la recherche.
  */
 async function renderDonsListe() {
   const toutes = await donsList();
@@ -396,6 +500,9 @@ async function renderDonsListe() {
 
   const box = document.getElementById("donsBox");
   if (!box) return;
+  // Le message « aucun don ne correspond » est distinct du cas « aucun don
+  // enregistré » : dans le premier, l'utilisateur doit comprendre que c'est
+  // sa recherche qui filtre tout, pas que les données manquent.
   box.innerHTML = filtrees.length
     ? filtrees.map((d) => donLigneHTML(d)).join("")
     : emptyHTML("Aucun don ne correspond a ces criteres.");

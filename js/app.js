@@ -1,25 +1,96 @@
 /**
- * @file app.js - Contrôleur principal et routeur de l'application M3D Gestion.
- * @description Coordonne les différentes vues (Accueil, Membres, Dimanches,
- * Dettes, Caisse, Activités, Calendrier), les graphiques Canvas 2D interactifs,
- * les fenêtres de saisie et la génération des exports PDF imprimables.
- */
-
+ * @file app.js - Orchestrateur et routeur de l'application M3D Gestion.
+ *
+ * LE MODÈLE MENTAL À RETENIR
+ * Ce fichier ne contient AUCUNE règle métier. Il ne sait pas combien vaut
+ * une cotisation, ni qui doit de l'argent à qui, ni comment se calcule un
+ * solde. Tout cela vit dans db.js et dans les modules de métier. Ce que
+ * fait app.js, c'est ASSEMBLER : il met les modules en relation, route
+ * les clics vers le bon onglet, et démarre l'application dans le bon ordre.
+ *
+ * Concrètement, on y trouve cinq responsabilités :
+ *   1. le routeur d'onglets (`showTab`) et l'état d'interface local
+ *      (filtres, tris, recherche) ;
+ *   2. l'enregistrement des gestionnaires d'événements globaux ;
+ *   3. les modales transverses, c'est-à-dire accessibles depuis partout
+ *      (fiche membre, historique, recherche globale, verrouillage) ;
+ *   4. les formulaires de saisie et les graphiques du tableau de bord ;
+ *   5. le cycle de vie : `start()`, qui ouvre la base puis initialise.
+ *
+ * Pour TOUT LE RESTE, app.js délègue aux modules : membres.js, finances.js,
+ * activites.js, cotisations.js, dons.js, exports.js, recherche.js,
+ * graphiques.js, systeme.js, et aux services/pdf/. Chaque module expose
+ * des fonctions `render*()` (rendu) et `open*()` (modale), et appelle
+ * d'autres fonctions globales en retour. Les deux fichiers se connaissent
+ * donc dans les deux sens : c'est normal, et c'est le prix de l'architecture
+ * sans build ni framework.
+ *
+ * AVEC QUI IL COMMUNIQUE
+ *   - db.js       : toutes les lectures de données (jamais d'écriture
+ *                   directe hors de ce fichier pour la logique métier) ;
+ *   - state.js    : l'onglet courant, la session active, l'authentification ;
+ *   - ui.js       : openSheet(), closeSheet(), toast(), confirmWithPassword() ;
+ *   - utils.js    : fmt(), fmtDate(), esc(), fullName(), initials() ;
+ *   - les modules : voir ci-dessus.
+ *
+ * VOCABULAIRE DE CE FICHIER, DÉFINI ICI
+ *   - `async` / `await` : une fonction `async` peut se mettre en pause à
+ *     chaque `await`, rendant la main au navigateur. Indispensable ici,
+ *     car tout part d'une lecture en base : attendre ne bloque jamais
+ *     l'interface, contrairement à un code synchrone.
+ *   - « closure » (fermeture) : une fonction définie à l'intérieur d'une
+ *     autre fonction voit les variables de celle-ci. `refreshWeekRows()`
+ *     et `notifyAutresEcrans()` dans openWeekDetail() sont des closures :
+ *     elles retiennent `rowsBox`, `dimId` et `ov` sans qu'on ait à les
+ *     transmettre. C'est ce qui rend le code lisible ici.
+ *   - « event listener » (écouteur d'événement) : fonction mémorisée par
+ *     `addEventListener`, appelée automatiquement quand l'événement se
+ *     produit ("click", "input", "change").
+ *
+ * Note sur la « delegation d'événements » : on attache UN seul écouteur
+ *     sur un conteneur parent, et on identifie le bouton réellement cliqué
+ *     avec `.closest()`. Indispensable ici, car les lignes de la liste des
+ *     paiements sont réécrites après chaque cochage : un écouteur posé sur
+ *     chaque ligne serait perdu à la première réécriture, alors que
+ *     l'écouteur posé sur le conteneur survit et continue de fonctionner.
+ *   - « délégation d'événements » : on attache UN seul écouteur sur un
+ *     conteneur parent, et on identifie le bouton réellement cliqué avec
+ *     `.closest()`. Indispensable ici, car les lignes de la liste des
+ *     paiements sont réécrites après chaque cochage : un écouteur posé
+ *     sur chaque ligne serait perdu à la première réécriture, alors que
+ *     l'écouteur posé sur le conteneur survit et continue de fonctionner.
+//
 // ============================================================================
 // ÉLÉMENTS DOM CENTRAUX & ÉTAT LOCAL
 // ============================================================================
 
-/** @type {HTMLElement} Conteneur principal de l'application */
+/**
+ * Conteneur principal de l'application. Tout le HTML de tous les onglets
+ * est écrit dans cet élément : c'est le « point de montage » unique, et il
+ * est défini une seule fois, au chargement du fichier.
+ *
+ * `document.getElementById` cherche un élément du HTML par son attribut
+ * `id`. Il renvoie `null` si l'identifiant n'existe pas dans index.html —
+ * d'où l'importance de l'ordre de chargement des scripts : ce fichier
+ * s'exécute après le HTML, et suppose donc que les éléments soient déjà
+ * présents.
+ *
+ * @type {HTMLElement}
+ */
 const app = document.getElementById("app-content");
 
-// Filtres et tri des membres
+// Filtres et tri des membres.
+// Ce sont des variables d'interface : elles retiennent ce que l'utilisateur
+// a choisi entre deux rendus. Elles vivent ici parce qu'elles appartiennent
+// au contrôleur, pas à un module métier. `let` (et non `const`) car leur
+// valeur change au fil des saisies.
 let memberQuery = "";
 let memberSort = "alpha";
 let memberFilterFonction = "";
 let memberFilterMois = "";
 let memberFilterStatut = "";
 
-// Filtres et sélection des dimanches
+// Filtres et sélection des dimanches.
 let dimancheQuery = "";
 let dimancheShowArchives = false;
 
@@ -55,7 +126,46 @@ async function synchroniserSessionTopBar(nomSession) {
 /**
  * Affiche l'onglet sélectionné et orchestre le rendu de son contrôleur de vue.
  *
- * @param {string} tab - Identifiant de l'onglet ("accueil", "membres", "dimanche", "finance", "activites").
+ * C'est LE ROUTEUR de l'application. Il ne rend rien lui-même : il se
+ * contente de choisir la bonne fonction de rendu et de l'appeler.
+ *
+ * La correspondance avec le HTML est EXACTE et à deux endroits. Dans
+ * index.html, chaque bouton de navigation porte l'attribut
+ * `data-tab="..."` ; son contenu doit être l'un des cinq identifiants
+ * ci-dessous. Le clic est lu par `b.dataset.tab` (voir l'écouteur global
+ * en bas de fichier), puis passé à cette fonction. Si le HTML et cette
+ * liste divergent, l'onglet clique ne rendra rien — silencieusement.
+ * Vérifier les deux à chaque ajout d'onglet.
+ *
+ * Les cinq identifiants valides : "accueil", "membres", "dimanche",
+ * "finance", "activites".
+ *
+ * Le déroulé, étape par étape :
+ *   1. `setCurrentTab(tab)` mémorise l'onglet actif dans state.js. Cet état
+ *      est relu plus tard, par exemple pour rafraîchir l'accueil après une
+ *      modification faite ailleurs.
+ *   2. `classList.toggle("active", ...)` bascule la classe CSS qui affiche
+ *      visuellement l'onglet courant. `classList` est l'objet JavaScript
+ *      d'une liste de classes CSS ; `toggle(nom, condition)` ajoute la
+ *      classe si la condition est vraie, la retire sinon. L'attribut
+ *      `aria-selected` est mis à jour dans la foulée : c'est ce que lisent
+ *      les lecteurs d'écran, et c'est la seule façon d'accessibilité.
+ *   3. Deux blocs squelettes s'affichent le temps du chargement. Ils sont
+ *      remplacés dans la foulée par le contenu réel : l'utilisateur voit
+ *      que quelque chose arrive, au lieu d'un écran figé.
+ *   4. Le `try/catch` (bloc d'essai : s'il lève une erreur, `catch` la
+ *      récupère) enveloppe l'appel au rendu. Sans lui, une erreur dans un
+ *      module afficherait une page blanche. Avec lui, l'utilisateur voit
+ *      un message et l'application reste utilisable sur les autres onglets.
+ *      Le message technique est affiché lui aussi, échappé par esc(),
+ *      parce qu'il facilite le diagnostic.
+ *
+ * Effets de bord : écrit dans le DOM (écrase intégralement le contenu de
+ * `#app-content`), change l'état global, fait défiler la page en haut, et
+ * appelle la fonction de rendu correspondante.
+ *
+ * @param {string} tab - Identifiant de l'onglet, parmi les cinq listés
+ *   ci-dessus. Une valeur inconnue laisse l'écran vide sans erreur.
  * @returns {Promise<void>}
  */
 async function showTab(tab) {
@@ -91,6 +201,28 @@ async function showTab(tab) {
 /**
  * Rendu complet du tableau de bord d'accueil.
  * Exécute les requêtes de données en parallèle via Promise.all pour des performances optimales.
+ */
+/**
+ * Rend l'onglet Accueil (tableau de bord).
+ *
+ * Objectif : afficher en une seule page toutes les informations utiles au
+ * tresorier et au responsable : situation financiere, alertes du jour,
+ * prochaines activites, anniversaires du mois, statistiques de caisse.
+ *
+ * Parametres (aucun explicite) : utilise les fonctions globales du module
+ * db.js et le DOM via `app`.
+ *
+ * Retour : aucun (modifie `app.innerHTML` directement, puis branche les
+ * event listeners via `accueilModule.attacherEvenementsAuJourdhui`).
+ *
+ * Effet secondaire : oui, modifie le DOM et lance des requetes IndexedDB
+ * en parallel via `Promise.all`. C'est le seul point de chargement de la
+ * page d'accueil.
+ *
+ * Pourquoi cette fonction existe : c'est le hub de l'onglet Accueil.
+ * Elle rassemble des donnees de 14 sources differentes (membres,
+ * cotisations, dettes, caisse, anniversaires, activites, statistiques)
+ * parce que le tableau de bord doit tout montrer sans navigation.
  */
 async function renderAccueil() {
   const [
@@ -353,7 +485,20 @@ function weekCardDetailedHTML(j, memById) {
 
 /**
  * Vérifie si des filtres personnalisés sur les membres sont actuellement actifs.
- * @returns {boolean}
+ *
+ * Objectif : savoir s'il faut afficher le bouton « Réinitialiser les filtres »
+ * dans l'onglet Membres. Un filtre est « actif » dès qu'il s'écarte de sa
+ * valeur par défaut.
+ *
+ * @returns {boolean} `true` si au moins un filtre ou un tri est différent de
+ *   l'état initial, `false` sinon. Le tri est aussi pris en compte : l'ordre
+ *   alphabétique est la valeur par défaut.
+ * @sideEffect Aucun. Ne fait que lire les variables globales de filtre.
+ *
+ * Pourquoi cette fonction existe : sans elle, l'interface ne peut pas
+ * distinguer « l'utilisateur n'a rien filtré » de « le filtre en cours
+ * n'a rien donné comme résultat ». Le vide affiché dans le second cas doit
+ * proposer un moyen de revenir en arrière.
  */
 function memberFiltersActive() {
   return !!(memberFilterFonction || memberFilterMois || memberFilterStatut) || memberSort !== "alpha";
@@ -361,6 +506,21 @@ function memberFiltersActive() {
 
 /**
  * Rendu principal de l'onglet Membres.
+ *
+ * Objectif : afficher la liste complète des membres avec la barre de recherche,
+ * les filtres et le tri. C'est la fonction d'entrée de l'onglet, appelée par
+ * `showTab("membres")` à chaque changement d'onglet.
+ *
+ * @returns {Promise<void>} Promesse résolue une fois le HTML injecté et les
+ *   gestionnaires d'événements branchés.
+ * @sideEffect Oui. Modifie `app.innerHTML`, définit la variable globale
+ *   `memberResults` (utilisée plus bas par le tri) et attache les écouteurs
+ *   sur la barre de recherche et les filtres.
+ *
+ * Pourquoi cette fonction existe : `renderMembres` fait le travail lourd
+ * (HTML, filtres, tri) et délègue la mise en forme ligne par ligne à
+ * `renderMemberList`. La séparation permet de re-trier la liste sans
+ * reconstruire toute la page — on rappelle seulement `renderMemberList`.
  */
 async function renderMembres() {
   app.innerHTML = `
@@ -502,7 +662,29 @@ function openMemberFiltersSheet() {
 /**
  * Fiche détaillée d'un membre avec historique individuel, édition et export PDF.
  *
- * @param {string} id - Identifiant du membre.
+ * Objectif : ouvrir une feuille (bottom-sheet) qui regroupe tout ce qui
+ * concerne un membre : identité, situation financière, historique de ses
+ * cotisations, dettes, prêts et actions disponibles (édition, suppression,
+ * export PDF, historique individuel).
+ *
+ * @param {string} id - Identifiant du membre (clé primaire de la table
+ *   `membres`). On reçoit l'identifiant et non l'objet lui-même parce que la
+ *   fiche peut être ouverte depuis un contexte qui n'a qu'une référence sous
+ *   la main (une ligne de liste, un résultat de recherche).
+ * @returns {Promise<void>} Promesse résolue une fois la feuille ouverte et
+ *   ses gestionnaires branchés. Si le membre n'existe plus (supprimé entre-temps),
+ *   la fonction retourne sans rien afficher — un garde-fou plutôt qu'une erreur.
+ * @sideEffect Oui. Lit en base (`db.membres.get`, `dettesList`), injecte du
+ *   HTML via `openSheet`, et attache les écouteurs de la feuille.
+ *
+ * Pourquoi cette fonction existe : regrouper l'information d'un membre en un
+ * seul endroit évite de navigate entre trois onglets pour répondre à « cet
+ * homme me doit combien ? ». C'est l'écran de référence du trésorier.
+ *
+ * Note sur `dettesList()` : elle est appelée sans filtre puis filtrée sur
+ * `d.id_membre === id`. On pourrait passer un filtre directement, mais
+ * `dettesList` s'appuie sur un index unique et le filtre mémoire évite une
+ * seconde requête. À réévaluer si le nombre de membres devient très grand.
  */
 async function openMemberDetail(id) {
   const m = await db.membres.get(id);
@@ -846,7 +1028,33 @@ async function openNewSunday() {
  * Fiche détaillée d'un dimanche : cochage des paiements, enregistrement des prêts, export PDF.
  * Utilise la délégation d'événements pour une performance optimale.
  *
- * @param {string} dimId - Identifiant du dimanche.
+ * Objectif : ouvrir la feuille de collecte d'un dimanche. C'est l'écran le
+ * plus utilisé de l'application : le trésorier y coche qui a payé, y saisit
+ * les sommes, et y enregistre qui a avancé de l'argent pour le groupe.
+ *
+ * @param {string} dimId - Identifiant du dimanche (clé primaire de la table
+ *   `dimanches`). On passe l'identifiant car la feuille se recharge depuis la
+ *   base après chaque modification.
+ * @returns {Promise<void>} Promesse résolue une fois la feuille ouverte et
+ *   le gestionnaire de clics branché. Si le dimanche n'existe plus, retourne
+ *   sans rien afficher.
+ * @sideEffect Oui. Lit quatre tables (`dimanches`, `paiements`,
+ *   `anniversaires_du_jour`, `membres`, `prets_membres`), injecte du HTML et
+ *   attache un écouteur unique sur la zone des lignes.
+ *
+ * Pourquoi la délégation d'événements : les lignes de membres sont
+ * regénérées à chaque coche (voir `refreshWeekRows`). Brancher un écouteur
+ * par ligne représenterait autant d'écouteurs à recréer à chaque rafraîchis.
+ * Un seul écouteur sur le conteneur suffit : on lit l'attribut `data-` de
+ * l'élément cliqué pour savoir de quoi il s'agit. C'est le bon compromis
+ * ici, car le nombre de lignes est de l'ordre de la少人数.
+ *
+ * Trois fonctions internes, définies dans sa portée :
+ *   - `refreshWeekRows()` : relit la base et reconstruit les lignes + jauge ;
+ *   - `notifyAutresEcrans()` : prévient les onglets qui affichent des totaux ;
+ *   - `openPretPicker()` : ouvre le sélecteur du prêteur pour un paiement.
+ * Elles sont imbriquées (et non globales) parce qu'elles n'ont de sens
+ * qu'ici : elles referment sur `dimId`, `ov` et `memById`.
  */
 async function openWeekDetail(dimId) {
   const dim = await db.dimanches.get(dimId);
@@ -918,7 +1126,12 @@ async function openWeekDetail(dimId) {
     toast("Date mise a jour");
   });
 
-  // Délégation d'événements sur la liste des paiements
+  // DÉLÉGATION D'ÉVÉNEMENTS sur la liste des paiements.
+  // On attache UN seul écouteur sur le conteneur `rowsBox`, et on détecte
+  // quel bouton a été cliqué avec `.closest()`. Pourquoi : les lignes sont
+  // réécrites à chaque cochage ; un écouteur posé sur chaque bouton serait
+  // perdu à la première réécriture, alors que celui posé sur le conteneur
+  // survit et continue de fonctionner.
   const rowsBox = ov.querySelector("#wd_rows");
   rowsBox.addEventListener("click", async (e) => {
     const target = /** @type {HTMLElement} */ (e.target);
@@ -943,6 +1156,24 @@ async function openWeekDetail(dimId) {
     }
   });
 
+  /**
+   * Recharge la feuille depuis la base et recalcule les totaux.
+   *
+   * Objectif : après chaque coche ou saisie, l'affichage doit refléter ce
+   * qui est réellement en base, et non ce que l'on croit avoir enregistré.
+   * On relit donc systématiquement les lignes avant de redessiner.
+   *
+   * @returns {Promise<void>} Promesse résolue une fois le HTML des lignes
+   *   réinjecté et la jauge de progression mise à jour.
+   * @sideEffect Oui. Écrit dans le DOM de la feuille (lignes, total, jauge,
+   *   compteur de payeurs, reste à collecter).
+   *
+   * Pourquoi `slice()` avant `sort()` : `sort()` modifie le tableau qu'il
+   * reçoit. Or `freshPaiements` sert aussi au calcul des totaux plus bas.
+   * On trie donc une copie — sinon l'ordre de la base serait perdu pour la
+   * suite de la fonction, et surtout le tableau d'origine ne doit jamais
+   * être modifié par une opération d'affichage.
+   */
   async function refreshWeekRows() {
     const [freshPaiements, freshPrets] = await Promise.all([
       db.paiements.where("id_dimanche").equals(dimId).toArray(),
@@ -968,6 +1199,24 @@ async function openWeekDetail(dimId) {
     if (resteEl) resteEl.textContent = newReste > 0 ? `Reste ${fmt(newReste)}` : "Complet";
   }
 
+  /**
+   * Prévient les autres onglets qu'un montant vient de changer.
+   *
+   * Objectif : le solde de caisse et le résumé financier apparaissent sur
+   * plusieurs onglets à la fois. Marquer un paiement ici change des
+   * totails calculés ailleurs ; on redessine donc l'onglet courant s'il
+   * dépend de ces chiffres.
+   *
+   * @returns {void}
+   * @sideEffect Oui,-appelle un `render*` qui modifie le DOM. Le nom
+   *   « notify » est donc un peu trompeur : rien n'est envoyé à personne,
+   * *  c'est un rafraîchissement. La fonction porte ce nom parce qu'elle
+   *   *notifie* la changement, pas parce qu'elle émet un événement.
+   *
+   * Pourquoi ne pas tout rafraîchir systématiquement : l'onglet Membres
+   * n'a aucun rapport avec une cotisation. On ne redessine que les trois
+   * écrans dont les chiffres dépendent réellement des paiements.
+   */
   function notifyAutresEcrans() {
     const current = getCurrentTab();
     if (current === "accueil") renderAccueil();
@@ -975,6 +1224,28 @@ async function openWeekDetail(dimId) {
     else if (current === "finance") renderFinance();
   }
 
+  /**
+   * Ouvre le sélecteur du membre qui a avancé l'argent.
+   *
+   * Objectif : quand plusieurs membres cotisent ensemble et qu'un seul
+   * règle en espèces, il faut mémoriser *qui* a prêté la somme. L'écran
+   * affiche la liste des autres participants (on ne peut pas prêter à
+   * soi-même) et enregistre le couple prêteur / prêt.
+   *
+   * @param {string} idPaiement - Identifiant de la ligne de paiement marquée
+   *   payée par l'avance. C'est cette ligne que le prêt référence ensuite :
+   *   sans elle, on ne saurait pas à quel dimanche et quel membre rattacher
+   *   la somme avancée.
+   * @returns {void}
+   * @sideEffect Oui. Ouvre une feuille imbriquée via `openSheet` et y écrit
+   *   le prêt via `enregistrerPret`.
+   *
+   * Pourquoi `paiements` et non une relecture : la liste des participants
+   * est déjà chargée plus haut dans `openWeekDetail`. La relire coûterait
+   * une requête pour un résultat identique. Le prix à payer est que la liste
+   * peut dater du dernier rafraîchissement — sans conséquence ici, puisqu'un
+   * prêt ne modifie pas qui participe.
+   */
   function openPretPicker(idPaiement) {
     const autresParticipants = paiements
       .filter((p) => p.id !== idPaiement)
@@ -1030,24 +1301,89 @@ async function openWeekDetail(dimId) {
 // CYCLE DE VIE & DÉMARRAGE DE L'APPLICATION
 // ============================================================================
 
-// Écouteurs de navigation sur la tabbar principale
+// ENREGISTREMENT DES GESTIONNAIRES D'ÉVÉNEMENTS GLOBAUX.
+// Tout ce bloc s'exécute une seule fois, au chargement du fichier, et pose
+// les écouteurs qui vivent plus longtemps que les onglets.
+//
+// `document.querySelectorAll(".tab")` renvoie un NodeList : une liste
+// d'éléments du HTML correspondant au sélecteur CSS ".tab". `.forEach` la
+// parcourt pour attacher un écouteur à chaque bouton de la tabbar.
+// L'attribut `data-tab` est lu par `.dataset.tab` : `dataset` est l'objet
+// JavaScript correspondant aux attributs `data-*` du HTML, ce qui permet
+// de garder un identifiant dans le HTML sans le dupliquer en JavaScript.
+// C'est le même identifiant que showTab() attend — d'où l'importance que
+// les deux listes restent synchronisées.
 document.querySelectorAll(".tab").forEach((b) => {
   b.addEventListener("click", () => showTab(/** @type {HTMLElement} */ (b).dataset.tab));
 });
 
-// Système : espace séparé des 5 onglets métier, accessible depuis la topbar
+// Le bouton Système n'est PAS un onglet : c'est un espace séparé (sauvegarde,
+// paramètres, exports) accessible depuis la topbar, et volontairement hors
+// du routage à cinq onglets.
 document.getElementById("systemeBtn").addEventListener("click", () => openSysteme());
 
-// Initialisation du thème avant tout rendu
+// Initialisation du thème avant tout rendu : le thème doit être posé avant
+// la première peinture, sinon l'utilisateur verrait un éclair de la mauvaise
+// palette de couleurs au démarrage.
 initTheme();
 
-// Surveillance d'inactivité et reverrouillage automatique
+// Surveillance d'inactivité et reverrouillage automatique.
+// initVisibilityWatcher() installe l'écouteur qui détecte le retour sur
+// l'onglet ; la fonction passée en argument est appelée au moment de
+// reverrouiller. On ferme d'abord toutes les modales (closeAllSheets), car
+// laisser une fiche membre ouverte après verrouillage exposerait des
+// données sur un écran déverrouillé ensuite.
 initVisibilityWatcher(() => {
   closeAllSheets();
   showLoginScreen();
 });
 
-// Bootstrap asynchrone
+/**
+ * Point d'entrée de l'application : c'est cette fonction qui décide de ce
+ * qui s'affiche au premier lancement.
+ *
+ * Pourquoi elle est enveloppée dans une fonction anonyme exécutée
+ * immédiatement ( `(async function start() { ... })()` ) : c'est un motif
+ * (« IIFE ») qui permet d'écrire une fonction `async` de haut niveau sans
+ * polluer l'espace global d'un nom supplémentaire. Elle démarre dès que
+ * ce fichier est atteint, ce qui est voulu : app.js est le dernier script
+ * chargé, donc tous les modules qu'il appelle existent déjà.
+ *
+ * L'ORDRE EST DÉLIBÉRÉ ET NON NÉGLIGEABLE. Chaque étape conditionne la
+ * suivante ; les inverser produit des pannes difficiles à diagnostiquer.
+ *
+ *   1. `await ouvrirBase()` — ouvrir ET migrer la base AVANT toute lecture.
+ *      Dexie ouvre la base en tâche de fond à la première requête si on ne
+ *      l'appelle pas explicitement : l'application démarrerait quand même,
+ *      et une erreur (base en v8, table `dons` absente) remonterait trois
+ *      secondes plus tard, sans localisation. ouvrirBase() compare aussi
+ *      `db.verno` à SCHEMA_VERSION et refuse de démarrer sur une base
+ *      plus ancienne que le code. En cas d'échec, on affiche un message
+ *      explicite et on s'arrête avec `return` : il vaut mieux un écran
+ *      d'erreur clair qu'une application à moitié chargée.
+ *   2. `seedIfEmpty()` — insère les données de premier lancement, une
+ *      seule fois, et seulement si la base est vide.
+ *   3. Enregistrement du Service Worker PWA. Voluntaryment placé ICI,
+ *      après la base : le service worker sert l'application hors-ligne, et
+ *      on veut être sûr que le code à mettre en cache fonctionne avant de
+ *      le demander au navigateur. Son échec est silencieux (`.catch` +
+ *      `console.warn`) : l'application doit rester utilisable sans PWA.
+ *   4. `isAdminConfigured()` — si aucun mot de passe n'existe encore, on
+ *      affiche l'écran de première configuration et on s'arrête.
+ *   5. `isSessionAuthed()` — non authentifié : écran de connexion.
+ *   6. `verrouillerSiExpire(...)` — si l'inactivité a dépassé 30 minutes
+ *      pendant l'absence de l'utilisateur, on reverrouille aussi. C'est
+ *      ce qui empêche qu quelqu'un ouvre l'application après une longue
+ *      absence sans repasser par le mot de passe.
+ *   7. Enfin seulement : `synchroniserSessionTopBar()` puis
+ *      `showTab("accueil")`.
+ *
+ * Effets de bord : écrit massivement dans le DOM, peut ouvrir une base,
+ * peut enregistrer un service worker. Aucune de ces étapes ne peut être
+ * exécutée dans le désordre sans casser l'application.
+ *
+ * @returns {Promise<void>}
+ */
 (async function start() {
   // La base doit etre ouverte ET a jour de schema avant la moindre lecture.
   // Sans cette attente explicite, Dexie ouvre en arriere-plan a la premiere

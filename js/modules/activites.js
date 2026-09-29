@@ -1,14 +1,60 @@
 /**
- * @file activites.js - Module Activités : gestion des événements et listes.
- * @description Gère les activités/événements avec frais modulaires et paiements échelonnés.
+ * @file activites.js — Module Activités : événements, frais, paiements et calendrier.
+ *
+ * Ce que contient ce fichier
+ * --------------------------
+ * Le plus gros module de l'application (951 lignes), et le seul qui regroupe
+ * plusieurs écrans dans un même fichier :
+ *   - un hub d'activités, avec recherche et filtre sur les archives ;
+ *   - le formulaire de création et de modification d'une activité ;
+ *   - la fiche détaillée d'une activité (participants, frais, paiements) ;
+ *   - le formulaire de frais et les écrans de paiement échelonné ;
+ *   - le calendrier, en trois vues : mois, semaine, jour.
+ *
+ * Ce que cela permet à l'utilisateur
+ * -----------------------------------
+ * Organiser une sortie, une reunion ou un voyage : on décrit l'événement
+ * (date, lieu, heure, responsable), on le découpe en frais distincts
+ * (« Participation », « Transport », « Repas »), puis on encaisse chaque
+ * membre en plusieurs fois s'il le souhaite. L'historique de chaque encaissement
+ * est conservé, ce qui permet de relancer qui n'a pas fini de payer.
+ *
+ * Avec quoi ce module communique
+ * ------------------------------
+ * EN ENTRÉE : quatre tables, lues presque toutes via des fonctions de db.js
+ *   (`listesAll`, `listeFrais`, `listePaiementsListe`, `listMembres`).
+ *   Plus la session active et les fonctions utilitaires globales
+ *   (`fmt`, `fmtDate`, `esc`, `isoToDate`, `todayISO`).
+ * EN SORTIE : écrit dans `listes`, `liste_frais`, `liste_paiements`,
+ *   `liste_membres`, et le journal d'activité `activity_log`. L'interface est
+ *   reconstruite par Affectation de `app.innerHTML`, puis branchée.
+ *
+ * Choix de conception
+ * -------------------
+ * Une activité est un « conteneur » : elle ne porte pas de montant unique mais
+ * une liste de `liste_frais`, et chaque membre a son propre historique dans
+ * `liste_paiements`. C'est ce qui permet à un membre de payer 1000 F sur une
+ * participation de 5000 F, en trois fois, sans que l'application ne perde la
+ * trace des étapes intermédiaires. Voir docs/FLUX_METIER.md.
  */
 
 // État de navigation et filtres des activités
+// Ces variables portent l'état de l'interface entre deux rendus : la recherche
+// en cours, le choix d'afficher ou non les archives, et la position dans le
+// calendrier. Elles sont globales (et non passées en paramètre) parce que
+// plusieurs fonctions distinctes doivent les lire et les modifier : le champ
+// de recherche, le bouton « Archives » et les flèches du calendrier.
 let listesQuery = "";
 let listesShowArchivees = false;
 let listeDetailQuery = "";
 
 // Navigation du calendrier
+// `calendrierVue` vaut "mois", "semaine" ou "jour" : c'est le même calendrier,
+// affiché à trois niveaux de détail. `calendrierDateRef` est la date pivot
+// (celle affichée, pas forcément celle sélectionnée) et
+// `calendrierJourSelectionne` est le jour sur lequel l'utilisateur a cliqué.
+// Les deux sont distincts : en vue « mois », on peut regarder novembre tout en
+// gardant la sélection sur le 3 décembre.
 let calendrierVue = "mois";
 let calendrierDateRef = todayISO();
 let calendrierJourSelectionne = todayISO();
@@ -20,7 +66,29 @@ let calendrierJourSelectionne = todayISO();
 
 /**
  * Calcule le libellé de la période temporelle affichée dans le calendrier.
- * @returns {string}
+ *
+ * Objectif : produire le texte du bouton qui affiche la période en cours —
+ * « Novembre 2026 », « 3 decembre 2026 », ou « 30 nov. - 6 dec. 2026 »
+ * selon la vue active.
+ *
+ * @returns {string} Le libellé, déjà formaté en français.
+ * @sideEffect Aucun. Ne modifie ni la date ni le DOM.
+ *
+ * Détail à comprendre : la ligne `const jSem = (lun.getDay() + 6) % 7;`
+ * convertit le numéro de jour renvoyé par JavaScript en position dans une
+ * semaine commençant au **lundi**.
+ *
+ *   - `getDay()` renvoie 0 pour dimanche, 1 pour lundi, ... 6 pour samedi.
+ *     C'est une convention anglo-saxe, alors que l'année scolaire et
+ *     professionnelle française commence le lundi.
+ *   - Le `+ 6` décale tout d'un cran : dimanche (0) devient 6, lundi (1)
+ *     devient 0, mardi (2) devient 1... et samedi (6) devient 5.
+ *   - Le `% 7` ramène le dimanche de 6 à 6 : sans lui, dimanche vaudrait
+ *     6 au lieu de 0 et la semaine serait décalée d'un jour.
+ *
+ * Après ce calcul, `jSem` vaut 0 si le jour est un lundi, et 6 s'il est un
+ * dimanche : exactement le nombre de jours à reculer pour atteindre le lundi
+ * de la semaine en cours. Le même calcul est repris dans `joursGrilleMois`.
  */
 function calendrierLabelPeriode() {
   const d = isoToDate(calendrierDateRef);
@@ -38,7 +106,25 @@ function calendrierLabelPeriode() {
 
 /**
  * Décale la période du calendrier en avant ou en arrière.
- * @param {number} direction - (-1 ou +1)
+ *
+ * Objectif : réagir aux flèches « précédent » / « suivant » du calendrier.
+ * Le pas dépend de la vue : un mois, une semaine, ou un jour.
+ *
+ * @param {number} direction - `-1` pour reculer, `+1` pour avancer. On passe
+ *   un nombre et non un booléen parce que la même fonction sert aux deux
+ *   flèches ; il ne faut donc pas deux fonctions quasi identiques.
+ * @returns {void}
+ * @sideEffect Oui. Modifie les variables globales `calendrierDateRef` (et
+ *   `calendrierJourSelectionne` en vue « jour »), puis redessine le calendrier.
+ *
+ * Détail à comprendre : `d.setMonth(d.getMonth() + direction)` gère
+ * automatiquement le passage d'un mois de 31 jours au suivant. Le 31 janvier
+ * + 1 mois donne le 28 ou 29 février, sans code supplémentaire.
+ *
+ * Pourquoi la vue « jour » synchronise les deux dates : en vue jour, il n'y
+ * a qu'une seule date affichée, donc avancer doit aussi déplacer la
+ * sélection. Dans les autres vues, le jour sélectionné reste inchangé —
+ * l'utilisateur parcourt des mois sans perdre le jour qu'il consultait.
  */
 function calendrierNaviguer(direction) {
   const d = isoToDate(calendrierDateRef);

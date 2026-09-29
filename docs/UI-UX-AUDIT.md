@@ -202,22 +202,22 @@ Sur l'inventaire de composants demandé en section 15, l'état actuel est :
 
 | Composant demandé | État actuel |
 |---|---|
-| Button / IconButton | ✅ `.btn`, `.btn-primary`, `.btn-ghost`, `.btn-chip`, `.icon-btn` |
-| Badge / Chip | ✅ `.badge` (+ variantes statut) / ⚠️ `.tag` fait office de chip, nommage à unifier |
-| Card / StatCard | ⚠️ 4 variantes non unifiées (voir ci-dessus) ; pas de StatCard dédiée (le KPI en tient lieu partiellement) |
-| Avatar | ✅ `.avatar` |
-| SearchInput | ✅ `.search` / `.search-wrap` |
-| FilterButton | ❌ absent |
-| EmptyState | ⚠️ `.empty` existe mais générique, pas de variante par écran |
-| Alert | ⚠️ confondu avec Toast, pas de composant bannière persistante distinct |
-| ProgressBar | ❌ absent (le taux de paiement des activités n'a aujourd'hui aucune représentation visuelle progressive) |
-| DataTable | ❌ absent à l'écran — les `<table>` existants (`js/app.js` L3035+) ne servent qu'aux exports PDF/impression, pas à l'affichage interactif |
-| Modal / BottomSheet / Drawer | ✅ Sheet géré par `ui.js` (pile, focus, Échap) / ❌ pas de vrai Drawer distinct |
-| FormField / Tabs / SegmentedControl | ✅ `.field` / ✅ tabbar mais pas de composant Tabs générique réutilisable / ❌ SegmentedControl absent |
-| Toast | ✅ `.toast`/`.toast-error` |
-| Skeleton | ✅ existe mais rangé dans `base.css` au lieu de `components.css` — incohérence de rangement, pas de bug |
-| PageHeader / SectionHeader | ⚠️ `.section-title` couvre SectionHeader ; pas de PageHeader dédié (titre de page géré au cas par cas) |
-| FinancialSummary | ❌ absent en tant que composant — le résumé caisse est reconstruit en inline à chaque écran qui en a besoin |
+| Button / IconButton |  `.btn`, `.btn-primary`, `.btn-ghost`, `.btn-chip`, `.icon-btn` |
+| Badge / Chip |  `.badge` (+ variantes statut) /  `.tag` fait office de chip, nommage à unifier |
+| Card / StatCard |  4 variantes non unifiées (voir ci-dessus) ; pas de StatCard dédiée (le KPI en tient lieu partiellement) |
+| Avatar |  `.avatar` |
+| SearchInput |  `.search` / `.search-wrap` |
+| FilterButton |  Absent |
+| EmptyState |  `.empty` existe mais générique, pas de variante par écran |
+| Alert |  Confondu avec Toast, pas de composant bannière persistante distinct |
+| ProgressBar |  Absent (le taux de paiement des activités n'a aujourd'hui aucune représentation visuelle progressive) |
+| DataTable |  Absent à l'écran — les `<table>` existants (`js/app.js` L3035+) ne servent qu'aux exports PDF/impression, pas à l'affichage interactif |
+| Modal / BottomSheet / Drawer |  Sheet géré par `ui.js` (pile, focus, Échap) /  Pas de vrai Drawer distinct |
+| FormField / Tabs / SegmentedControl |  `.field` /  Tabbar mais pas de composant Tabs générique réutilisable /  SegmentedControl absent |
+| Toast |  `.toast`/`.toast-error` |
+| Skeleton |  Existe mais rangé dans `base.css` au lieu de `components.css` — incohérence de rangement, pas de bug |
+| PageHeader / SectionHeader |  `.section-title` couvre SectionHeader ; pas de PageHeader dédié (titre de page géré au cas par cas) |
+| FinancialSummary |  Absent en tant que composant — le résumé caisse est reconstruit en inline à chaque écran qui en a besoin |
 
 ---
 

@@ -205,12 +205,12 @@ Couverture notable :
 
 | Niveau | Sujet | Détail |
 |---|---|---|
-| 🟠 | `js/db.js` — 2 170 lignes | Reste le plus gros fichier. C'est la couche données, donc le découpage doit se faire par domaine, pas au hasard. |
-| 🟠 | `js/modules/activites.js` — 951 lignes | Un module = plusieurs écrans (hub, listes, calendrier, détail). Scission possible. |
-| 🟡 | `TABS` dans `config.js` est du code mort | La constante annonce l'ancienne barre d'onglets (`dettes`, `plus`) alors que le HTML en définit cinq autres. Elle n'est référencée nulle part — mais `verify-globals.js` la vérifie, donc elle paraît vivante. Supprimer, ou faire du HTML la source unique. |
-| 🟡 | Aucune automatisation | Les tests tournent à la main. Pas de CI. |
-| 🟡 | `RAPPORT.md` obsolète | Décrit la refonte listes→activités, désormais livrée. À archiver. |
-| 🟡 | Exports financiers | Une refonte supplémentaire est possible : chaque module appelle encore `rapportStats()` séparément. |
+| Important | `js/db.js` — 2 170 lignes | Reste le plus gros fichier. C'est la couche données, donc le découpage doit se faire par domaine, pas au hasard. |
+| Important | `js/modules/activites.js` — 951 lignes | Un module = plusieurs écrans (hub, listes, calendrier, détail). Scission possible. |
+| Moyen | `TABS` dans `config.js` est du code mort | La constante annonce l'ancienne barre d'onglets (`dettes`, `plus`) alors que le HTML en définit cinq autres. Elle n'est référencée nulle part — mais `verify-globals.js` la vérifie, donc elle paraît vivante. Supprimer, ou faire du HTML la source unique. |
+| Moyen | Aucune automatisation | Les tests tournent à la main. Pas de CI. |
+| Moyen | `RAPPORT.md` obsolète | Décrit la refonte listes→activités, désormais livrée. À archiver. |
+| Moyen | Exports financiers | Une refonte supplémentaire est possible : chaque module appelle encore `rapportStats()` séparément. |
 
 ---
 

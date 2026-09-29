@@ -121,7 +121,7 @@ relèvent de la recette manuelle ci-dessous.
    ```
    La migration doit être **additive, idempotente et non destructive**. Ne
    modifiez jamais une migration déjà déployée.
-3. ⚠️ **Ajoutez la table à `TABLES_APPLICATION` dans
+3.  **Ajoutez la table à `TABLES_APPLICATION` dans
    `js/modules/systeme.js`.** C'est une liste blanche figée : une table
    absente est **silencieusement perdue** dans les sauvegardes JSON.
 4. Incrémentez `SCHEMA_VERSION` dans `db.js`.

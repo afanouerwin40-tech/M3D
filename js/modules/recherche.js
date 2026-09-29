@@ -2,6 +2,49 @@
  * @file recherche.js - Recherche globale multi-critères.
  * @description Barre de recherche unique de l'accueil, interrogeant les membres,
  * les listes d'activités et les dimanches de collecte avec anti-rebond (debounce).
+ *
+ * Ce que contient ce fichier
+ * -------------------------
+ * Deux fonctions et deux variables d'état. C'est volontairement minimal : la
+ * recherche est une couche de confort, pas une fonctionnalité métier, et elle
+ * ne contient pas la logique de filtrage elle-même (elle appelle les fonctions
+ * de db.js et affiche le résultat, rien de plus).
+ *
+ * Ce que cela permet à l'utilisateur
+ * ----------------------------------
+ * Un champ unique en haut de l'onglet Accueil, dans lequel taper une seule
+ * lettre suffit. Un même texte cherche dans trois choses à la fois : les
+ * membres (par nom, téléphone, fonction, ou date d'anniversaire), les
+ * activités, et les dimanches de collecte. Les résultats sont groupés par
+ * entité et cliquables : cliquer ouvre directement la fiche concernée, sans
+ * avoir à changer d'onglet puis chercher.
+ *
+ * Avec quoi ce module communique
+ * ------------------------------
+ * EN ENTREE (via les globales du projet, aucun import) :
+ *   - listMembres(), listesAll(), joursAvecStats() : les trois sources, dans
+ *     js/db.js. Elles renvoient des Promises, d'ou le `await`.
+ *   - fullName(), initials(), fmtDate(), esc(), MOIS_NOMS : js/utils.js et
+ *     js/config.js.
+ *   - showTab(), openMemberDetail(), renderListes(), openListeDetail(),
+ *     openWeekDetail() : app.js et modules/activites.js. Certaines rendent
+ *     une Promise, d'ou les `.then(...)` a la fin : la navigation doit etre
+ *     finie AVANT d'ouvrir la fiche.
+ * EN SORTIE : rien d'autre que le DOM. Aucune base de donnees n'est ecrite.
+ *
+ * Choix de conception
+ * -------------------
+ * Le debounce (anti-rebond) est la decision centrale de ce fichier. Taper
+ * "Bernard" declenche sept evenements `input`. Sans attente, ce serait sept
+ * requetes base de donnees et sept reecritures de la liste de resultats, dont
+ * six immediatement perimees. On attend donc que la frappe se calme
+ * (voir wireGlobalSearch).
+ *
+ * La recherche est volontairement "naive" : `includes` sur du texte en
+ * minuscules. Pas d'index inverse, pas de tolerance aux fautes de frappe.
+ * A l'echelle d'une association (quelques centaines de membres, quelques
+ * dizaines d'activites), le balayage complet est instantane, et il a
+ * l'avantage de ne jamais louper un resultat.
  */
 
 // ============================================================================

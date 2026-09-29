@@ -176,6 +176,20 @@ async function renderSysteme() {
 /**
  * Liste blanche exhaustive des tables de la base de données IndexedDB.
  * DOIT être mise à jour à chaque évolution de schéma.
+ *
+ * Pourquoi une liste figée plutôt qu'un parcours automatique : l'export de
+ * sauvegarde est la seule operation qui doit copier *tout*. Si elle
+ * parcourait la base dynamiquement, elle embarquerait aussi les tables
+ * techniques internes de Dexie, qui ne sont pas des donnees de l'application.
+ * Inversement, toute table ajoutee a db.js et oubliee ici disparait
+ * silencieusement des sauvegardes, sans aucun message a l'utilisateur. La
+ * liste est donc volontairement figee, et son maintien est une obligation de
+ * maintenance inscrite dans CLAUDE.md.
+ *
+ * `Object.freeze` empeche toute modification a l'execution : une tentative
+ * d'ecriture echoue silencieusement en mode strict, plutot que de corrompre
+ * silencieusement la definition pour le reste de la session.
+ *
  * @type {readonly string[]}
  */
 const TABLES_APPLICATION = Object.freeze([
@@ -199,6 +213,25 @@ const TABLES_APPLICATION = Object.freeze([
 /**
  * Exporte l'intégralité de la base de données dans un fichier JSON structuré.
  * Garantit l'inclusion des tables d'activités (liste_frais, liste_paiements).
+ *
+ * Objectif : produire un fichier de sauvegarde complet, lisible par un humain
+ * et reimportable par l'application. C'est la seule forme de sauvegarde qui
+ * existe : les données vivent dans IndexedDB, sur l'appareil, et rien d'autre
+ * ne les conserve.
+ *
+ * @returns {Promise<void>} Promesse résolue une fois le fichier enregistré ou
+ *   partagé. Ne retourne pas de données : le contenu est déjà dans le fichier.
+ * @sideEffect Oui. Lit les 15 tables, crée un objet `Blob` (un fichier en
+ *   mémoire) puis le confie a `partagerOuTelechargerFichier`.
+ *
+ * Pourquoi la boucle plutôt que `Promise.all` : `Promise.all` paralléliserait
+ * les quinze lectures, mais l'ordre des cles dans le JSON importerait pour la
+ * lisibilité du fichier. La boucle force un ordre stable et lisible.
+ *
+ * Pourquoi `version: 2` dans le fichier : ce champ décrit le *format* de
+ * l'export, pas la version de l'application. Une sauvegarde faite par une v1.x
+ * reste lisible par la v2.x. Il permet a `importBackup` de refuser
+ * proprement un fichier venu d'une version future.
  */
 async function exportBackup() {
   const data = {};
@@ -231,7 +264,44 @@ async function exportBackup() {
  * Restaure une sauvegarde JSON en écrasant les données existantes de manière transactionnelle.
  * Exige la confirmation par mot de passe administrateur.
  *
- * @param {Event} e - Événement de sélection de fichier.
+ * Objectif : recharger l'application depuis un fichier de sauvegarde. C'est
+ * l'opération la plus destructive du logiciel : elle efface les données
+ * actuelles avant d'écrire celles du fichier. Trois garde-fous l'entourent,
+ * dans cet ordre : mot de passe administrateur, validation de la structure
+ * du fichier, transaction unique.
+ *
+ * @param {Event} e - Événement `change` d'un `<input type="file">`. On
+ *   reçoit l'événement et non le fichier lui-même parce que le gestionnaire
+ *   est branché directement sur l'input : le fichier sélectionné n'est
+ *   accessible qu'à travers `e.target.files[0]`.
+ * @returns {Promise<void>} Promesse résolue une fois l'import terminé ou
+ *   annulé. Ne lève jamais : toute erreur est rattrapée et affichée en toast.
+ * @sideEffect Oui, et de grande ampleur. Vide puis réécrit les tables
+ *   concernées en base, affiche un toast, resynchronise la barre de session
+ *   et renvoie vers l'accueil (le contenu affiché avant l'import n'a plus
+ *   aucun sens).
+ *
+ * Trois décisions à comprendre :
+ *
+ * 1. **Le mot de passe est demandé AVANT la lecture du fichier.** On ne lit
+ *    rien tant que l'utilisateur n'a pas confirmé. Un fichier chosen par
+ *    erreur ne peut donc pas déclencher d'écriture.
+ *
+ * 2. **Seules les tables de `TABLES_APPLICATION` sont importées.** Le filtre
+ *    `TABLES_APPLICATION.indexOf(t) !== -1` écarte toute clé inconnue du
+ *    fichier. Sans lui, un JSON fabriqué à la main pourrait créer des tables
+ *    arbitraires dans la base de l'utilisateur.
+ *
+ * 3. **Une seule transaction pour toutes les tables.** `db.transaction("rw",
+ *    ...)` garantit que l'import est *tout ou rien* : si l'écriture de la
+ *    dixième table échoue, les neuf précédentes sont annulées. Sans cela, un
+ *    fichier corrompu à mi-parcours laisserait la base dans un état
+ *    incohérent — précisément le cas de perte de données que cette fonction
+ *    existe pour éviter.
+ *
+ * Le `e.target.value = ""` final n'est pas cosmétique : sans cette remise à
+ * zéro, réimporter deux fois le même fichier ne déclencherait aucun
+ * `change`, puisque la valeur du champ n'aurait pas changé.
  */
 async function importBackup(e) {
   const file = /** @type {HTMLInputElement} */ (e.target).files[0];
