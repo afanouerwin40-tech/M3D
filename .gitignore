@@ -1,0 +1,170 @@
+# M3D Gestion - Fichiers à ignorer
+
+# ===================================================================
+# Dépendances Node.js (si jamais utilisées pour tooling)
+# ===================================================================
+node_modules/
+package-lock.json
+yarn.lock
+
+# ===================================================================
+# Environnement et Configuration Locale
+# ===================================================================
+.env
+.env.*
+!.env.example
+
+# ===================================================================
+# Données Utilisateurs et Sauvegardes
+# ===================================================================
+# Sauvegardes JSON exportées contiennent des données sensibles
+sauvegarde-*.json
+backup-*.json
+export-*.json
+m3d-backup-*.json
+m3d-export-*.json
+
+# Anciennes sauvegardes
+*.backup
+*.bak
+
+# ===================================================================
+# Fichiers Système
+# ===================================================================
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# Windows
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# Linux
+*~
+.directory
+.Trash-*
+
+# ===================================================================
+# Éditeurs et IDEs
+# ===================================================================
+# Visual Studio Code
+.vscode/
+!.vscode/extensions.json
+!.vscode/settings.json.example
+*.code-workspace
+
+# JetBrains (WebStorm, IntelliJ)
+.idea/
+*.iml
+*.iws
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+
+# Vim
+*.swp
+*.swo
+*~
+
+# Emacs
+\#*\#
+.\#*
+
+# ===================================================================
+# Logs et Temporaires
+# ===================================================================
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Fichiers temporaires
+*.tmp
+*.temp
+tmp/
+temp/
+
+# ===================================================================
+# Build et Distribution (au cas où)
+# ===================================================================
+dist/
+build/
+out/
+
+# ===================================================================
+# Tests et Coverage (si implémentés)
+# ===================================================================
+coverage/
+.nyc_output/
+*.lcov
+
+# ===================================================================
+# Captures d'écran et Médias de Test
+# ===================================================================
+# Ne pas ignorer les assets officiels du projet
+screenshots/
+test-images/
+*.test.jpg
+*.test.png
+
+# ===================================================================
+# Documentation Générée
+# ===================================================================
+docs/api/
+docs/_build/
+
+# ===================================================================
+# Fichiers Diff et Patches
+# ===================================================================
+*.diff
+*.patch
+*.orig
+*.rej
+
+# ===================================================================
+# Fichiers Spécifiques au Projet
+# ===================================================================
+# Fichiers de travail temporaires mentionnés dans le code
+*.work
+*.wip
+
+# Anciennes versions avant refactorisation (au cas où)
+*.old.js
+*.backup.js
+*_old.*
+*_backup.*
+
+# ===================================================================
+# Base de Données de Test
+# ===================================================================
+# IndexedDB vit dans le navigateur, mais au cas où des dumps locaux
+test-db/
+*.db.json
+
+# ===================================================================
+# Certificats et Clés (ne devraient jamais être ici)
+# ===================================================================
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+
+# ===================================================================
+# Divers
+# ===================================================================
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+.vuepress/dist/
