@@ -53,3 +53,12 @@ npm-debug.log*
 # --- Node.js (si utilise en local pour les tests uniquement) ---
 node_modules/
 package-lock.json
+# ============================================================
+# Fichiers doc en local (pas sur GitHub)
+docs/
+DOCUMENTATION_REPORT.md
+CLAUDE.md
+CHANGELOG.md
+REFACTORING_REPORT.md
+README.md
+*.md
