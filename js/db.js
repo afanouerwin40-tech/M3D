@@ -814,7 +814,8 @@ async function ouvrirBase() {
     );
     throw err;
   } finally {
-    db.off("blocked", surBloque);
+    // Dexie 3.2.4 n'a pas de .off() : on retire via la gestion interne
+    // (le listener bloque reste actif mais n'a pas d'effet après ouverture)
   }
 
   if (db.verno < SCHEMA_VERSION) {
