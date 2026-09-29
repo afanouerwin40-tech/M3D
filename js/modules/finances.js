@@ -294,18 +294,32 @@ async function renderDettes(container) {
     ${remboursees.length ? `<div class="section-title"><h2>Remboursees (${remboursees.length})</h2></div><div class="card list-card" id="dettesRemb"></div>` : ""}
   `;
 
-  const rowHTML = (d, actionable) => `
+  // Une dette encore impayee ne montre que son montant attendu. Une dette
+  // remboursee affiche en plus qui a rembourse, quand et pour quel
+  // montant reel — le montant encaisse peut differer du montant attendu.
+  const rowHTML = (d, actionable) => {
+    const meta = actionable
+      ? fmtDate(d.date)
+      : `${fmtDate(d.date)} &middot; rembourse par ${esc(d.remb_par || "?")}`
+        + `${d.remb_date ? " le " + fmtDate(d.remb_date) : ""}`;
+    const montant = !actionable && d.remb_montant != null && d.remb_montant !== d.montant
+      ? `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.remb_montant)}</span>`
+      : `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>`;
+    return `
     <div class="row" ${actionable ? `data-paiement="${d.id_paiement}"` : ""}>
       <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${(d.membre[0] || "?").toUpperCase()}</div>
-      <div class="info"><div class="name">${esc(d.membre)}</div><div class="meta">${fmtDate(d.date)}</div></div>
-      <span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>
+      <div class="info"><div class="name">${esc(d.membre)}</div><div class="meta">${meta}</div></div>
+      ${montant}
     </div>`;
+  };
 
   document.getElementById("dettesImpayees").innerHTML =
     impayees.map((d) => rowHTML(d, true)).join("") || emptyHTML("Aucune dette en cours.");
 
   document.querySelectorAll("#dettesImpayees .row").forEach((row) =>
-    row.addEventListener("click", () => openRembourser(/** @type {HTMLElement} */ (row).dataset.paiement)),
+    row.addEventListener("click", () => openRembourser(/** @type {HTMLElement} */ (row).dataset.paiement).catch((err) => {
+      console.error("[M3D] Ouverture de la modale de remboursement echouee", err);
+    })),
   );
 
   if (remboursees.length) {
@@ -316,13 +330,37 @@ async function renderDettes(container) {
 /**
  * Modale d'enregistrement du remboursement d'une dette.
  *
+ * La personne ayant remboursé est pré-sélectionnée sur le débiteur, mais
+ * reste modifiable : un tiers peut rembourser à la place d'un absent. Son
+ * nom est figé dans `nom_rembourseur` au moment de l'enregistrement, pour
+ * que l'historique reste lisible même si le membre est ensuite modifié ou
+ * supprimé.
+ *
  * @param {string} idPaiement - Identifiant du paiement concerné.
  */
-function openRembourser(idPaiement) {
+async function openRembourser(idPaiement) {
+  const p = await db.paiements.get(idPaiement);
+  if (!p) {
+    toast("Paiement introuvable");
+    return;
+  }
+
+  // Tous les membres, pas seulement les actifs : un dettes peut être soldée
+  // par un membre devenu inactif, et on ne doit pas l'empêcher de l'être.
+  const membres = (await db.membres.toArray()).sort((a, b) => fullName(a).localeCompare(fullName(b)));
+  const optionsHTML =
+    membres
+      .map(
+        (m) =>
+          `<option value="${m.id}"${m.id === p.id_membre ? " selected" : ""}>${esc(fullName(m))}</option>`,
+      )
+      .join("") || '<option value="">Aucun membre disponible</option>';
+
   const ov = openSheet(`
     <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
     <h3>Marquer comme remboursee</h3>
-    <div class="field"><label for="rb_montant">Montant</label><input id="rb_montant" type="number"></div>
+    <div class="field"><label for="rb_par">A rembourse</label><select id="rb_par">${optionsHTML}</select></div>
+    <div class="field"><label for="rb_montant">Montant</label><input id="rb_montant" type="number" value="${p.montant_attendu}"></div>
     <div class="field"><label for="rb_note">Note (facultatif)</label><input id="rb_note" type="text"></div>
     <button class="btn btn-primary" id="rb_save">Confirmer le remboursement</button>
   `);
@@ -330,31 +368,51 @@ function openRembourser(idPaiement) {
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
 
   ov.querySelector("#rb_save").addEventListener("click", async () => {
-    const p = await db.paiements.get(idPaiement);
+    const sel = /** @type {HTMLSelectElement} */ (ov.querySelector("#rb_par"));
+    const idRembourseur = sel ? sel.value : "";
+    if (!idRembourseur) {
+      toast("Choisissez qui a rembourse");
+      return;
+    }
+    const rembourseur = membres.find((m) => m.id === idRembourseur);
     const montantInput = /** @type {HTMLInputElement} */ (ov.querySelector("#rb_montant"));
     const montant = Number(montantInput ? montantInput.value : 0) || p.montant_attendu;
     const noteInput = /** @type {HTMLInputElement} */ (ov.querySelector("#rb_note"));
+    const nomRem = rembourseur ? fullName(rembourseur) : "";
 
-    await db.remboursements.add({
-      id: uid(),
-      id_membre: p.id_membre,
-      id_paiement_concerne: idPaiement,
-      date_remboursement: todayISO(),
-      montant,
-      note: noteInput ? noteInput.value.trim() : "",
-    });
+    // Les deux écritures vont dans la meme transaction : sans cela, une
+    // coupure entre elles laisserait un encaissement en caisse sans dette
+    // solderee, et l'anomalie ne serait visible nulle part.
+    try {
+      await db.transaction("rw", db.remboursements, db.caisse_mouvements, async () => {
+        await db.remboursements.add({
+          id: uid(),
+          id_membre: p.id_membre,
+          id_paiement_concerne: idPaiement,
+          id_membre_rembourseur: idRembourseur,
+          nom_rembourseur: nomRem,
+          date_remboursement: todayISO(),
+          montant,
+          note: noteInput ? noteInput.value.trim() : "",
+        });
 
-    await db.caisse_mouvements.add({
-      id: uid(),
-      date: todayISO(),
-      type: "Entree",
-      montant,
-      libelle: `Remboursement de dette (${p.id_membre})`,
-      categorie: null,
-      justificatif: null,
-      id_auteur: null,
-      id_activite: null,
-    });
+        await db.caisse_mouvements.add({
+          id: uid(),
+          date: todayISO(),
+          type: "Entree",
+          montant,
+          libelle: `Remboursement de dette (${nomRem})`,
+          categorie: null,
+          justificatif: null,
+          id_auteur: idRembourseur,
+          id_activite: null,
+        });
+      });
+    } catch (err) {
+      console.error("[M3D] Enregistrement du remboursement echoue", err);
+      toast("Remboursement non enregistre");
+      return;
+    }
 
     await log("remboursement", "cree", idPaiement);
     closeSheet();

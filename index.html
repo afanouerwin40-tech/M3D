@@ -74,10 +74,31 @@
 <script src="./js/modules/cotisations.js"></script>
 <script src="./js/modules/finances.js"></script>
 <script src="./js/modules/activites.js"></script>
+<script src="./js/modules/dons.js"></script>
 <script src="./js/modules/recherche.js"></script>
 <script src="./js/modules/graphiques.js"></script>
 <script src="./js/modules/exports.js"></script>
+<script src="./js/services/pdf/socle.js"></script>
+<script src="./js/services/pdf/composants.js"></script>
+<script src="./js/services/pdf/rapports.js"></script>
 <script src="./js/modules/systeme.js"></script>
 <script src="./js/app.js"></script>
+<!--
+  Harnais de test — charge uniquement si la page est ouverte sur le serveur
+  local (localhost). Sur une copie deployed, la balise est inerte : le script
+  n'est jamais telecharge, donc il n'est jamais dans le cache du service worker.
+-->
+<script>
+  if (["localhost", "127.0.0.1", ""].includes(location.hostname)) {
+    const s = document.createElement("script");
+    s.src = "./tools/donnees-test.js";
+    s.onload = () => console.log(
+      "%c[test] genererDonneesTest() disponible dans la console — lancez : " +
+      "await genererDonneesTest()",
+      "color:#C4714A;font-weight:bold",
+    );
+    document.head.appendChild(s);
+  }
+</script>
 </body>
 </html>

@@ -33,6 +33,7 @@ function openSysteme() {
 async function renderSysteme() {
   const montantCotis = await getParam("montant_cotisation_defaut", 500);
   const montantCadeau = await getParam("montant_cadeau_defaut", 12000);
+  const organisation = await getParam("organisation_nom", "Jeunesse M3D");
 
   app.innerHTML = `
     <button class="btn-chip" id="systemeBackBtn" style="margin-bottom:12px;">&larr; Retour</button>
@@ -40,6 +41,7 @@ async function renderSysteme() {
 
     <div class="section-title" style="margin-top:0;"><h2>Parametres</h2></div>
     <div class="card" style="margin-bottom:24px;">
+      <div class="field"><label for="p_organisation">Nom de l'organisation</label><input id="p_organisation" type="text" value="${esc(organisation)}" maxlength="80" placeholder="Jeunesse M3D"><div class="small-note">Imprime en en-tete de tous les exports PDF.</div></div>
       <div class="field"><label for="p_cotis">Cotisation par defaut (FCFA)</label><input id="p_cotis" type="number" value="${montantCotis}"></div>
       <div class="field"><label for="p_cadeau">Cadeau par defaut (FCFA)</label><input id="p_cadeau" type="number" value="${montantCadeau}"></div>
       <button class="btn btn-primary" id="saveParamsBtn">Enregistrer</button>
@@ -105,8 +107,12 @@ async function renderSysteme() {
   document.getElementById("saveParamsBtn").addEventListener("click", async () => {
     const cotis = Number(/** @type {HTMLInputElement} */ (document.getElementById("p_cotis")).value) || 500;
     const cadeau = Number(/** @type {HTMLInputElement} */ (document.getElementById("p_cadeau")).value) || 12000;
+    const nomOrg = String(/** @type {HTMLInputElement} */ (document.getElementById("p_organisation")).value).trim();
     await setParam("montant_cotisation_defaut", cotis);
     await setParam("montant_cadeau_defaut", cadeau);
+    // Un nom vide ferait disparaitre l'identite de tous les exports : on
+    // refuse d'ecrire une valeur vide plutot que de la corriger apres coup.
+    if (nomOrg) await setParam("organisation_nom", nomOrg);
     toast("Parametres enregistres");
   });
 
@@ -187,6 +193,7 @@ const TABLES_APPLICATION = Object.freeze([
   "prets_membres",
   "liste_frais",
   "liste_paiements",
+  "dons",
 ]);
 
 /**

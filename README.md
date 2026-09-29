@@ -9,10 +9,11 @@ L'application fonctionne à 100% en local et hors-ligne grâce à une architectu
 ## Présentation
 
 **M3D Gestion** a été conçue pour répondre aux défis logistiques et financiers rencontrés lors de l'administration hebdomadaire d'un groupe paroissial de jeunes :
-- Suivi rigoureux des cotisations dominicales obligatoires (200 FCFA par dimanche).
+- Suivi rigoureux des cotisations dominicales obligatoires (500 FCFA par défaut, montant réglable dans les paramètres, cotisation personnalisée possible par membre).
 - Transparence totale de la caisse (entrées de cotisations, sorties de dépenses justifiées, solde net en temps réel).
 - Gestion complète de l'annuaire des jeunes (coordonnées, rôles pastoraux, anniversaires avec alertes).
 - Organisation d'activités et sorties d'envergure (camps, retraites, agapes) avec gestion de frais multiples modulaires et paiements échelonnés.
+- Enregistrement des dons, totaux et nombre de donateurs, avec export PDF.
 - Résilience absolue sur le terrain : fonctionne instantanément sur smartphone ou tablette même en l'absence totale de réseau Internet.
 
 ---
@@ -35,12 +36,13 @@ Toutes les fonctionnalités décrites ci-dessous sont **intégralement implémen
 ### 3. Dimanches & Cotisations
 - Sélection rapide du dimanche concerné (avec calendrier de navigation).
 - Pointage des présences et des cotisations en un geste.
-- Prise en compte du barème hebdomadaire (200 FCFA).
+- Barème hebdomadaire par défaut de 500 FCFA, modifiable dans les paramètres, avec cotisation personnalisée par membre.
 - Enregistrement des avances et régularisations d'arriérés.
 
 ### 4. Dettes & Relances
 - Calcul automatique de la balance financière pour chaque membre (cotisations attendues vs cotisations réellement payées).
 - Liste ordonnée des membres ayant des impayés avec code couleur visuel.
+- **Suivi du remboursement** : la dette est soldée en indiquant qui a payé et quand. Un nom est **figé** au moment du remboursement, afin que l'historique reste lisible même si le membre est ensuite supprimé ou renommé.
 - Génération de messages de relance prêts à l'envoi pour messageries instantanées.
 
 ### 5. Activités & Événements Multi-Frais
@@ -48,19 +50,37 @@ Toutes les fonctionnalités décrites ci-dessous sont **intégralement implémen
 - **Frais multiples modulaires** : définition de plusieurs frais indépendants par activité (ex. transport, hébergement, repas, t-shirt) avec possibilité pour chaque participant de choisir les options qui le concernent.
 - **Historique chronologique inaltérable des encaissements** : enregistrement daté des acomptes avec mode de versement et commentaires.
 - **Statuts de paiement dynamiques** : calcul automatique (Non payé, Partiel, Payé, Surpayé) selon le cumul des acomptes reçus.
-- Clôture et réouverture des activités, export au format PDF pour impression des listes de pointage.
+- Clôture et réouverture des activités, calendrier mois / semaine / jour.
 
-### 6. Journal des Dépenses & Caisse
+### 6. Dons
+- Enregistrement de dons de **montant libre**, rattachés à un membre, avec activité facultative, date et note.
+- Écran global avec recherche, filtre par activité, bornes de dates et tri.
+- Total et nombre de donateurs recalculés en permanence, récapitulatif par activité.
+
+### 7. Rapports PDF
+Cinq rapports prêts à imprimer, tous construits sur un socle commun (en-tête, pied de page paginé, alignement des colonnes chiffrées) :
+
+| Rapport | Contenu |
+| :--- | :--- |
+| **Membre** | Fiche individuelle : résumé financier, collecte, dettes, prêts |
+| **Activité** | Frais, participants, dons reçus |
+| **Cotisation** | Feuille de collecte d'un dimanche, avec les non-payants |
+| **Dons** | Synthèse, ventilation par activité, détail — reprend les filtres affichés |
+| **Financier** | Synthèse, dettes impayées et soldées, prêts, mouvements de caisse |
+
+Deux exports supplémentaires : dettes et prêts entre membres.
+
+### 8. Journal des Dépenses & Caisse
 - Saisie des dépenses engagées pour le compte de la communauté (achats de matériel, collations, secours).
 - Catégorisation des dépenses et déduction immédiate du solde global de caisse.
 
-### 7. Sauvegarde, Restauration & Sécurité
-- Exportation intégrale de la base de données au format JSON en un clic.
+### 9. Sauvegarde, Restauration & Sécurité
+- Exportation intégrale de la base de données au format JSON en un clic (les 15 tables).
 - Restauration fiable avec validation structurelle complète de toutes les tables.
-- Protection par mot de passe administrateur pour toutes les opérations destructives ou sensibles.
+- Protection par mot de passe administrateur (SHA-256 + sel) pour toutes les opérations destructives ou sensibles.
 - Verrouillage automatique de la session après 30 minutes d'inactivité.
 
-### 8. Ergonomie & Design
+### 10. Ergonomie & Design
 - Thème clair et thème sombre (Dark Mode) avec persistance du choix.
 - Interface adaptée aux écrans tactiles mobiles avec barre de navigation inférieure et fiches *bottom-sheet*.
 - Support optimisé des grands écrans d'ordinateur (desktop >900px) et des feuilles de style d'impression papier (`@media print`).
@@ -88,7 +108,7 @@ Le projet est organisé selon une architecture modulaire à séparation stricte 
 M3D/
 ├── index.html               # Page unique de l'application (SPA)
 ├── manifest.webmanifest     # Configuration PWA (icônes, thème, mode standalone)
-├── sw.js                    # Service Worker v17 (gestion du cache et offline)
+├── sw.js                    # Service Worker v39 (gestion du cache et offline)
 │
 ├── css/
 │   ├── style.css            # Faisceau d'importation unifié (@import)
@@ -101,10 +121,30 @@ M3D/
 ├── js/
 │   ├── config.js            # Constantes métier immuables et dictionnaires
 │   ├── utils.js             # Fonctions utilitaires pures (dates, monnaie, sécurité XSS)
-│   ├── db.js                # Définition du schéma Dexie et requêtes IndexedDB
+│   ├── db.js                # Schéma Dexie (v9) et requêtes IndexedDB
 │   ├── state.js             # Gestion de l'état (thème, session pastorale, verrouillage)
 │   ├── ui.js                # Contrôleurs UI réutilisables (modales, toasts, sheets)
-│   └── app.js               # Contrôleur principal et rendu des vues
+│   ├── app.js               # Orchestrateur : routage des onglets, modales transverses
+│   │
+│   ├── modules/             # Logique métier par domaine
+│   │   ├── accueil.js       # Tableau de bord
+│   │   ├── membres.js       # Annuaire
+│   │   ├── cotisations.js   # Feuilles de collecte dominicales
+│   │   ├── finances.js      # Caisse, dettes, prêts entre membres
+│   │   ├── activites.js     # Activités, frais, calendrier
+│   │   ├── dons.js          # Dons
+│   │   ├── recherche.js     # Recherche globale
+│   │   ├── graphiques.js    # Graphiques Canvas
+│   │   ├── exports.js       # Points d'entrée des exports
+│   │   └── systeme.js       # Paramètres, sauvegarde, restauration
+│   │
+│   └── services/
+│       └── pdf/             # Production documentaire
+│           ├── socle.js     # Feuille de style, en-tête, pied de page, impression
+│           ├── composants.js# Tableaux, résumés, listes
+│           └── rapports.js  # Les cinq rapports PDF
+│
+├── tools/                   # Harnais de test Node — aucune dépendance npm
 │
 ├── icons/
 │   ├── icon-192.png         # Icône PWA standard (192x192)
@@ -184,9 +224,21 @@ L'application a été testée et validée sur les navigateurs et environnements 
 
 ## Développement
 
-Consultez le guide détaillé [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) pour découvrir les règles de contribution, les conventions d'architecture et les protocoles de tests manuels.
+Lancer les tests (aucune installation requise) :
+
+```bash
+node tools/verify-globals.js     # 118 identifiants globaux
+node tools/test-dettes.js        # 26 assertions
+node tools/test-donnees-test.js  # 29 assertions
+node tools/test-logique.js       # 22 assertions
+node tools/test-pdf.js           # 34 assertions
+```
+
+Consultez le guide détaillé [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) pour découvrir les règles de contribution, les conventions d'architecture et le protocole de recette.
 
 Consultez [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) pour une explication approfondie du modèle de données et des flux d'information.
+
+Le détail de la refonte v1.9.0 est dans [REFACTORING_REPORT.md](REFACTORING_REPORT.md).
 
 ---
 

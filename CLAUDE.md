@@ -1,6 +1,6 @@
 # M3D Gestion — Mémoire Technique
 
-**Version actuelle :** 1.8.2  
+**Version actuelle :** 1.9.0  
 **Dernière mise à jour :** 2026-09-29  
 **Type :** Progressive Web App (PWA) Vanilla JavaScript  
 **Paradigme :** Offline-first, No-Build, Zero Backend  
@@ -64,16 +64,26 @@
 ┌──────────────────────────────────────────────────────────────┐
 │                    Ordre de Chargement                       │
 ├──────────────────────────────────────────────────────────────┤
-│ 1. Dexie.js (CDN)     → Wrapper IndexedDB                    │
-│ 2. config.js          → Constantes métier                    │
-│ 3. utils.js           → Fonctions utilitaires                │
-│ 4. db.js              → Couche données                       │
-│ 5. state.js           → État global (thème, session)         │
-│ 6. ui.js              → Composants UI (modales, toasts)      │
-│ 7. modules/accueil.js → Logique tableau de bord              │
-│ 8. modules/membres.js → Logique gestion membres              │
-│ 9. modules/cotisations.js → Logique cotisations              │
-│ 10. app.js            → Orchestrateur principal              │
+│  1. Dexie.js (CDN)     → Wrapper IndexedDB                   │
+│  2. config.js          → Constantes métier                   │
+│  3. utils.js           → Fonctions utilitaires               │
+│  4. db.js              → Couche données                      │
+│  5. state.js           → État global (thème, session)        │
+│  6. ui.js              → Composants UI (modales, toasts)     │
+│  7. modules/accueil.js → Tableau de bord                    │
+│  8. modules/membres.js → Gestion membres                    │
+│  9. modules/cotisations.js → Cotisations                    │
+│ 10. modules/finances.js → Finances, dettes, prêts          │
+│ 11. modules/activites.js → Activités, calendrier            │
+│ 12. modules/dons.js    → Dons                               │
+│ 13. modules/recherche.js → Recherche globale                │
+│ 14. modules/graphiques.js → Graphiques Canvas               │
+│ 15. modules/exports.js → Points d'entrée des exports        │
+│ 16. services/pdf/socle.js → Fondations d'impression         │
+│ 17. services/pdf/composants.js → Briques de tableau         │
+│ 18. services/pdf/rapports.js → Les 5 rapports PDF           │
+│ 19. modules/systeme.js → Système, sauvegarde, paramètres    │
+│ 20. app.js             → Orchestrateur                      │
 └──────────────────────────────────────────────────────────────┘
 ```
 
@@ -92,10 +102,26 @@ ui.js (utils, state)
     ↓
 modules/* (db, utils, config)
     ↓
+modules/exports.js  ← définit openPrintableWindow()
+    ↓
+services/pdf/socle.js      (dépend de openPrintableWindow)
+services/pdf/composants.js (dépend de socle.js pour le style)
+services/pdf/rapports.js   (dépend des deux précédents)
+    ↓
 app.js (tous les modules)
 ```
 
-**RÈGLE ABSOLUE** : Respecter cet ordre dans `index.html` pour éviter les références non définies.
+**RÈGLE ABSOLUE** : Respecter cet ordre dans `index.html` pour éviter les
+références non définies.
+
+**Ordre obligatoire pour les services PDF** : `exports.js` doit précéder
+`socle.js`, car le socle appelle `openPrintableWindow()`. Ce n'est pas un
+problème tant que les identifiants sont résolus à l'appel et non au
+chargement — mais inverser l'ordre serait trompeur pour le lecteur.
+
+**Vérification** : `node tools/verify-globals.js` contrôle que les 118
+identifiants listés dans `tools/identifiants-attendus.txt` sont
+réellement accessibles. À lancer après **tout** ajout de fonction globale.
 
 ---
 
@@ -105,11 +131,12 @@ app.js (tous les modules)
 M3D/
 ├── index.html                    # Point d'entrée unique (SPA)
 ├── manifest.webmanifest          # Configuration PWA
-├── sw.js                         # Service Worker v33
-├── VERSION                       # Version actuelle (UTF-8)
+├── sw.js                         # Service Worker v39
+├── VERSION                       # Version actuelle (UTF-8, sans BOM)
 ├── README.md                     # Documentation utilisateur
 ├── CHANGELOG.md                  # Historique des versions
-├── RAPPORT.md                    # Rapport refonte activités
+├── RAPPORT.md                    # Rapport refonte activités (obsolète)
+├── REFACTORING_REPORT.md         # Rapport de refonte v1.9.0
 ├── CLAUDE.md                     # Mémoire technique (ce fichier)
 │
 ├── css/
@@ -121,25 +148,47 @@ M3D/
 │   └── responsive.css            # >900px, print, anciens navigateurs
 │
 ├── js/
-│   ├── config.js                 # Constantes immuables
-│   ├── utils.js                  # Fonctions utilitaires pures
-│   ├── db.js                     # IndexedDB/Dexie (1919 lignes)
-│   ├── state.js                  # Gestion état global
-│   ├── ui.js                     # Primitives UI
-│   ├── app.js                    # Orchestrateur (3657 lignes) ⚠️
+│   ├── config.js                 # Constantes immuables (164 lignes)
+│   ├── utils.js                  # Fonctions utilitaires pures (404)
+│   ├── db.js                     # IndexedDB/Dexie (2170 lignes)
+│   ├── state.js                  # Gestion état global (176)
+│   ├── ui.js                     # Primitives UI (226)
+│   ├── app.js                    # Orchestrateur (1092)
 │   │
-│   └── modules/
-│       ├── accueil.js            # Tableau de bord
-│       ├── membres.js            # Gestion membres
-│       └── cotisations.js        # Gestion cotisations
+│   ├── modules/
+│   │   ├── accueil.js            # Tableau de bord (97)
+│   │   ├── membres.js            # Gestion membres (174)
+│   │   ├── cotisations.js        # Gestion cotisations (102)
+│   │   ├── finances.js           # Finances, dettes, prêts (486)
+│   │   ├── activites.js          # Activités, calendrier (951)
+│   │   ├── dons.js               # Dons (404)
+│   │   ├── recherche.js          # Recherche globale (116)
+│   │   ├── graphiques.js         # Graphiques Canvas (275)
+│   │   ├── exports.js            # Points d'entrée exports (277)
+│   │   └── systeme.js            # Système, sauvegarde (490)
+│   │
+│   └── services/
+│       └── pdf/
+│           ├── socle.js          # Fondations impression (187)
+│           ├── composants.js     # Briques de tableau (80)
+│           └── rapports.js       # Les 5 rapports (452)
+│
+├── tools/                        # Tests (aucune dépendance npm)
+│   ├── test-dettes.js            # 26 assertions
+│   ├── test-donnees-test.js      # 29 assertions
+│   ├── test-logique.js           # 22 assertions
+│   ├── test-pdf.js               # 34 assertions
+│   ├── verify-globals.js         # 118 identifiants
+│   ├── identifiants-attendus.txt # Liste de référence
+│   └── donnees-test.js           # Jeu de données de démonstration
 │
 ├── icons/
 │   ├── icon-192.png              # PWA standard
 │   └── icon-512.png              # PWA haute résolution
 │
 └── docs/
-    ├── ARCHITECTURE.md           # Documentation architecture
-    ├── DEVELOPMENT.md            # Guide développeur
+    ├── ARCHITECTURE.md           # Réécrit en v1.9.0 (schéma v9, SW v39)
+    ├── DEVELOPMENT.md            # Réécrit en v1.9.0 (tests, recettes, pièges)
     ├── CHANGELOG.md              # Historique détaillé
     ├── AUDIT-COMPTABILITE.md     # Audit comptable
     ├── UI-UX-AUDIT.md            # Audit UI/UX
@@ -150,7 +199,7 @@ M3D/
 
 ## 6. Modules JavaScript
 
-### 6.1 config.js (209 lignes)
+### 6.1 config.js (164 lignes)
 **Responsabilité** : Constantes métier immuables
 
 ```javascript
@@ -160,7 +209,7 @@ const CATEGORIES_DEPENSE = ["Transport", "Nourriture", ...];
 const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 ```
 
-### 6.2 utils.js (415 lignes)
+### 6.2 utils.js (404 lignes)
 **Responsabilité** : Fonctions utilitaires pures sans effet de bord
 
 - `fmt(n)` : Formatage monétaire (12000 → "12 000 F")
@@ -170,10 +219,10 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 - `compressImage()` : Compression JPEG via Canvas
 - `telechargerFichier()` : Téléchargement côté client
 
-### 6.3 db.js (1919 lignes)
+### 6.3 db.js (2170 lignes)
 **Responsabilité** : Couche d'accès aux données
 
-#### Tables IndexedDB (Schéma v8)
+#### Tables IndexedDB (Schéma v9)
 ```javascript
 {
   membres: "id, nom, prenom, statut, mois_anniversaire",
@@ -181,7 +230,7 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
   dimanches: "id, id_session, date, statut",
   anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
   paiements: "id, id_dimanche, id_membre",
-  remboursements: "id, id_membre, id_paiement_concerne",
+  remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
   caisse_mouvements: "id, date, type, categorie",
   parametres: "cle",
   activity_log: "++seq, date, entite, action",
@@ -189,7 +238,8 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
   liste_membres: "id, id_liste, id_membre",
   prets_membres: "id, id_dimanche, id_debiteur, id_preteur, id_paiement",
   liste_frais: "id, id_liste",
-  liste_paiements: "id, id_liste, id_membre"
+  liste_paiements: "id, id_liste, id_membre",
+  dons: "id, id_activite, id_membre, date"
 }
 ```
 
@@ -198,6 +248,26 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 - Tous les montants sont recalculés depuis l'historique
 - `montant_paye` = `Σ historique_paiements`
 - Garantit cohérence et traçabilité
+
+#### Ouverture explicite de la base
+`ouvrirBase()` doit être appelée avant **toute** lecture :
+
+```javascript
+const SCHEMA_VERSION = 9;
+await ouvrirBase();   // dans start(), avant seedIfEmpty()
+```
+
+Deux raisons :
+1. Dexie ouvre la base **en tâche de fond** si on ne l'appelle pas. L'app
+   démarrait donc quand même, et une erreur (base en v8, table `dons`
+   absente) remontait trois secondes plus tard, sans localisation.
+2. Une mise à jour bloquée (un autre onglet tient une connexion ouverte sur
+   une version antérieure) laisse `db.open()` en attente **indéfinie** :
+   ni résolue, ni rejetée. D'où le délai de 10 s, au-delà duquel un message
+   explicite s'affiche.
+
+`ouvrirBase()` compare ensuite `db.verno` à `SCHEMA_VERSION` et lève une
+erreur si la base est plus ancienne que le code.
 
 ### 6.4 state.js (176 lignes)
 **Responsabilité** : État global applicatif
@@ -239,22 +309,93 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 - Rendu liste dimanches
 - Attachement gestionnaires événements
 
-### 6.9 app.js (3657 lignes) ⚠️ PROBLÈME
-**Responsabilité ACTUELLE** : Trop de responsabilités
+### 6.9 modules/finances.js (486 lignes)
+**Responsabilité** : Finances, dettes et prêts entre membres
 
-**Contient actuellement :**
-- 69 fonctions
-- 19 fonctions `render*` (Accueil, Membres, Dimanches, Finances, Activités, Calendrier)
-- 22 fonctions `open*` (Modales, sheets, formulaires)
-- Logique métier finances
-- Logique métier activités
-- Logique métier calendrier
-- Export PDF/Excel
-- Système de sauvegarde
-- Recherche globale
-- Graphiques Canvas
+- `renderFinance()` : caisse, dettes, prêts
+- `openRembourser()` : enregistre qui a remboursé (voir §8, table
+  `remboursements`)
+- `renderDettes()` : affiche montant, date et personne ayant remboursé
 
-**À REFACTORISER** : Voir section 29 Dette Technique
+### 6.10 modules/activites.js (951 lignes)
+**Responsabilité** : Activités, listes et calendrier
+
+- Hub activités, fiches d'activité, frais, paiements échelonnés
+- Calendrier mois / semaine / jour
+- ⚠️ Plus gros module restant : plusieurs écrans dans un seul fichier
+
+### 6.11 modules/dons.js (404 lignes)
+**Responsabilité** : Dons
+
+- Écran global (recherche, filtre par activité, bornes de dates, tri)
+- Récapitulatif par activité (`renderDonsActivite`)
+- Formulaire de saisie (`openDonForm`)
+- Export PDF reprenant les filtres affichés
+
+### 6.12 modules/recherche.js (116 lignes)
+**Responsabilité** : Recherche globale transversale
+
+### 6.13 modules/graphiques.js (275 lignes)
+**Responsabilité** : Graphiques Canvas (évolution caisse, anniversaires)
+
+### 6.14 modules/exports.js (277 lignes)
+**Responsabilité** : Points d'entrée des exports
+
+Ne contient **plus** de mise en forme. Conserve les sept entrées historiques
+(renommées = régression, elles sont appelées par les boutons de l'interface)
+et les délègue au socle PDF ou à l'un des cinq rapports.
+
+`openPrintableWindow()` est définie ici : c'est le seul point d'ouverture de
+fenêtre d'impression, appelé à la fois par ce module et par le socle PDF.
+
+### 6.15 services/pdf/socle.js (187 lignes)
+**Responsabilité** : Fondations d'impression, écrites une seule fois
+
+- `PDF_COULEURS` : palette terracotta, alignée sur l'application
+- `pdfFeuilleStyle()` : `@page` A4, en-tête, tableaux, pied de page
+- `pdfEntete()` / `pdfPied()` : en-tête et pagination
+- `pdfDocumentComplet()` : **seul** point d'injection de HTML brut
+- `pdfOuvrirEtImprimer()` : ouvre la fenêtre, injecte, imprime
+
+**Règle** : toute valeur saisie par l'utilisateur passe par `esc()`, y
+compris dans le `<title>`. C'était une faille (deux chemins) corrigée en
+v1.9.0.
+
+### 6.16 services/pdf/composants.js (80 lignes)
+**Responsabilité** : Briques de tableau réutilisables
+
+- `pdfTableau()` : gère le cas « aucune donnée » en une seule fois
+- `pdfResume()`, `pdfLigneTotal()`, `pdfListe()`
+
+### 6.17 services/pdf/rapports.js (452 lignes)
+**Responsabilité** : Les cinq rapports PDF
+
+| Fonction | Contenu |
+|---|---|
+| `rapportMembrePDF(id)` | Fiche individuelle : résumé financier, collecte, dettes, prêts |
+| `rapportActivitePDF(id)` | Frais, participants, dons reçus |
+| `rapportCotisationPDF(id)` | Feuille de collecte d'un dimanche, non-payants |
+| `rapportDonsPDF(o)` | Synthèse, ventilation par activité, détail. Filtres `idActivite` / `du` / `au` |
+| `rapportFinancierPDF()` | Synthèse, dettes impayées et soldées, prêts, mouvements de caisse |
+
+`pdfIdentite()` lit le nom de l'organisation (paramètre
+`organisation_nom`, défaut « Jeunesse M3D ») et la session active.
+
+### 6.18 modules/systeme.js (490 lignes)
+**Responsabilité** : Système, sauvegarde, paramètres
+
+- `renderSysteme()` : paramètres, sauvegarde/restauration, exports, thème
+- `TABLES_APPLICATION` : **liste blanche figée des tables sauvegardées**.
+  Une table absente de cette liste est **silencieusement perdue** lors d'un
+  export JSON. Toute nouvelle table doit y être ajoutée.
+
+### 6.19 app.js (1092 lignes)
+**Responsabilité** : Orchestration
+
+- Routage des onglets (`showTab`)
+- Enregistrement des gestionnaires d'événements globaux
+- Modales transverses (member detail, recherche, verrouillage)
+- `start()` : ouvre la base, puis initialise
 
 ---
 
@@ -265,7 +406,7 @@ const SESSION_TIMEOUT_MS = 30 * 60 * 1000; // 30 minutes
 const db = new Dexie("m3d_db");
 ```
 
-### Schéma Actuel : Version 8
+### Schéma Actuel : Version 9
 
 #### Évolution du Schéma
 - **v1** : Membres, sessions, dimanches, paiements
@@ -276,6 +417,7 @@ const db = new Dexie("m3d_db");
 - **v6** : Activités multi-frais + historique paiements
 - **v7** : Métadonnées événements (lieu, heure, responsable)
 - **v8** : Dépenses avec catégories
+- **v9** : Dons (table `dons`) — additive, aucune donnée touchée
 
 ---
 
@@ -324,11 +466,13 @@ const db = new Dexie("m3d_db");
   type: string ("sortie" | "reunion" | "voyage" | ...),
   cloturee: boolean,
   archivee: boolean,
-  annulee: boolean,
-  couleur: string (#RRGGBB),
-  icone: string ("star" | "calendar" | ...)
+  annulee: boolean
 }
 ```
+
+> ⚠️ `couleur` et `icone` ne font **plus** partie de l'activité. Ils ont été
+> retirés du schéma et de l'interface ; la couleur d'affichage est dérivée du
+> `type`. Conséquence : `safeColor()` n'a plus aucun appel dans le code.
 
 ### liste_frais (Frais d'une activité)
 ```javascript
@@ -353,6 +497,53 @@ const db = new Dexie("m3d_db");
   commentaire: string
 }
 ```
+
+### dons (Dons, schéma v9)
+```javascript
+{
+  id: string (PK, UUID),
+  id_membre: string (FK → membres.id),
+  id_activite: string (FK → listes.id, optionnel — don général si absent),
+  montant: number,
+  date: string (ISO YYYY-MM-DD),
+  note: string
+}
+```
+
+Lecture : `donsList(filtres)` et `syntheseDons(filtres)`. Le total et le
+nombre de donateurs sont toujours recalculés, jamais stockés.
+
+### remboursements (Suivi « qui a remboursé »)
+```javascript
+{
+  id: string (PK, UUID),
+  id_membre: string (FK → membres.id, le débiteur),
+  id_paiement_concerne: string (FK → paiements.id),
+  id_membre_rembourseur: string (FK → membres.id),   // ajouté v1.9.0
+  nom_rembourseur: string,            // nom figé au moment du remboursement
+  date_remboursement: string (ISO YYYY-MM-DD),
+  montant: number,
+  note: string
+}
+```
+
+**Lecture du nom** — dans `dettesList()`, `js/db.js` :
+
+```javascript
+// Le nom fige est prioritaire. S'il manque (remboursement enregistre avant
+// v1.9.0), on retombe sur le membre rembourseur, puis sur le debiteur.
+const rembMember = r && r.id_membre_rembourseur
+  ? memById[r.id_membre_rembourseur] : null;
+const rembPar = r
+  ? r.nom_rembourseur
+    || (rembMember ? fullName(rembMember)
+       : (memById[p.id_membre] ? fullName(memById[p.id_membre]) : "?"))
+  : null;
+```
+
+`nom_rembourseur` est **figé volontairement** : il doit survivre à la
+suppression du membre et à son renommage. La fiche membre, elle, affiche le
+nom actuel. L'écran et l'historique ne racontent pas la même chose, par choix.
 
 ---
 
@@ -444,8 +635,8 @@ Variables CSS s'adaptent automatiquement via `[data-theme="dark"]`.
 ### Stratégie : Cache First + Stale While Revalidate
 
 ```javascript
-// sw.js v33
-const CACHE_NAME = "m3d-cache-v33";
+// sw.js v39
+const CACHE_NAME = "m3d-cache-v39";
 
 // Tous les assets critiques
 const ASSETS = [
@@ -454,6 +645,7 @@ const ASSETS = [
   "./css/*.css",
   "./js/*.js",
   "./js/modules/*.js",
+  "./js/services/pdf/*.js",
   "./icons/*.png",
   "https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js",
   "https://fonts.googleapis.com/css2?family=Inter..."
@@ -463,8 +655,13 @@ const ASSETS = [
 ### Incrémentation Version Cache
 À chaque modification des assets, incrémenter `CACHE_NAME` dans `sw.js` :
 ```javascript
-const CACHE_NAME = "m3d-cache-v34"; // ← Incrémenter ici
+const CACHE_NAME = "m3d-cache-v39"; // ← Incrémenter ici
 ```
+
+> ⚠️ Le cache sert la copie en cache et ne réactualise qu'en arrière-plan.
+> Après une modification, un simple rechargement peut donc servir l'ancien
+> fichier. En développement : `Ctrl+Shift+R`, ou désinstaller le service
+> worker (DevTools → Application → Service Workers).
 
 ### Activation PWA
 - **Android** : Menu → "Installer l'application"
@@ -491,17 +688,26 @@ const CACHE_NAME = "m3d-cache-v34"; // ← Incrémenter ici
 ## 14. Sécurité
 
 ### Protections Implémentées
-✅ **XSS** : `esc(str)` systématique avant injection HTML  
-✅ **Couleurs** : `safeColor(c)` valide format #RRGGBB  
+✅ **XSS** : `esc(str)` systématique avant injection HTML — **y compris dans la
+fenêtre d'impression**, y compris le `<title>` du document imprimé (corrigé en
+v1.9.0 : `writePrintableDocument()` injectait le titre sans échappement)  
 ✅ **Mots de passe** : Hash SHA-256 + salt, jamais en clair  
 ✅ **Verrouillage** : Auto après 30 min d'inactivité  
 ✅ **Import JSON** : Validation structure avant écriture  
+✅ **Version de base** : `ouvrirBase()` compare `db.verno` à `SCHEMA_VERSION`
+avant tout affichage — pas d'écran à moitié chargé sur une base en retard  
+
+> `safeColor()` a été supprimé du code avec les couleurs personnalisées des
+> activités. Les couleurs des exports PDF proviennent de `PDF_COULEURS`, des
+> valeurs en dur, jamais saisies par l'utilisateur.
 
 ### Limites Connues
 ❌ **IndexedDB non chiffrée** : Données en clair sur l'appareil  
 ❌ **Pas de multi-utilisateurs** : Un seul admin  
 ❌ **Pas de récupération MDP** : Pure offline  
 ❌ **localStorage accessible** : Thème, timestamps non sensibles  
+❌ **Noms complets en clair** : L'anonymisation après N mois n'a pas été
+implémentée (décision explicite). Les exports PDF contiennent les noms réels.  
 
 ### Recommandations
 - Ne pas stocker de données ultra-sensibles (mots de passe tiers, IBAN)
@@ -602,7 +808,10 @@ responsive.css ← Adaptations contextuelles
 4. **state.js** : Seul fichier à modifier état global
 5. **ui.js** : Composants UI génériques, réutilisables
 6. **modules/** : Logique métier par domaine
-7. **app.js** : Orchestration, pas de logique métier lourde
+7. **services/pdf/** : Production documentaire, sans accès à IndexedDB en
+   dehors des rapports. Doit venir **après** `exports.js` (il appelle
+   `openPrintableWindow()`)
+8. **app.js** : Orchestration, pas de logique métier lourde
 
 ### Règle d'Or
 > Si une fonction fait plus de 50 lignes, vérifier si elle peut être découpée.
@@ -611,30 +820,36 @@ responsive.css ← Adaptations contextuelles
 
 ## 20. Tests
 
-### État Actuel
-⚠️ **Pas de tests automatisés dans le dépôt**
+### Tests automatisés
+✅ **111 assertions** dans `tools/`, sans aucune dépendance npm (le projet
+est « no-build » et le reste).
 
-### Tests Mentionnés (RAPPORT.md)
-- `test_activites.mjs` : Tests logique métier pure (Dexie + fake-indexeddb)
-- `test_ui.mjs` : Tests DOM complet (jsdom)
-
-**ACTION REQUISE** : Intégrer les tests dans le dépôt.
-
-### Plan de Tests Futur
-```text
-tests/
-├── db/
-│   ├── migrations.test.js      # Migrations v1→v8
-│   └── integrity.test.js       # Cohérence données
-├── modules/
-│   ├── membres.test.js
-│   ├── cotisations.test.js
-│   ├── finances.test.js
-│   └── activites.test.js
-└── utils/
-    ├── formatage.test.js       # fmt, fmtDate
-    └── securite.test.js        # esc, safeColor
+```bash
+node tools/test-dettes.js       # 26 — dettes, remboursements, nom figé
+node tools/test-donnees-test.js  # 29 — jeu de données de démonstration
+node tools/test-logique.js       # 22 — logique métier
+node tools/test-pdf.js           # 34 — échappement, tableaux, cas limites
+node tools/verify-globals.js     # 118 identifiants globaux
 ```
+
+**Comment ça marche** : les harnais lisent `index.html`, exécutent les
+scripts dans l'ordre de chargement via le module `vm` de Node, avec un DOM
+simulé et une base Dexie simulée (`tools/sandbox.js`). Aucun `package.json`,
+aucun installateur.
+
+`verify-globals.js` compare les identifiants de `tools/identifiants-attendus.txt`
+à ce qui est réellement accessible. **Ajouter un identifiant global = l'ajouter
+à ce fichier**, sinon l'omission passe inaperçue.
+
+### Ce que les tests ne couvrent pas
+- Le rendu visuel réel (mise en page A4, pagination) — à vérifier à l'impression
+- La mise à jour IndexedDB v8 → v9 dans un vrai navigateur
+- Le comportement du service worker (propagation du cache)
+- Les tests tournent à la main : **pas de CI**
+
+### Couverture restante
+Non couvert à ce jour : migrations v1→v9 dans un vrai navigateur, rendu DOM
+complet (jsdom), cohérence entre tables après import d'une sauvegarde.
 
 ---
 
@@ -653,6 +868,12 @@ npx http-server -p 8080
 
 # Méthode 3 : VS Code
 # Extension "Live Server" → Clic droit index.html
+```
+
+### Lancer les Tests
+```bash
+node tools/verify-globals.js && node tools/test-dettes.js && node tools/test-donnees-test.js && node tools/test-logique.js && node tools/test-pdf.js
+# Attendu : 118 identifiants, puis 26 / 29 / 22 / 34 assertions
 ```
 
 ### Vérification Version Cache PWA
@@ -676,19 +897,35 @@ file VERSION
 
 ## 22. Version Actuelle
 
-**Version :** 1.8.2  
-**Date :** 2026-09-27  
-**Schéma DB :** v8  
-**Service Worker :** v33  
+**Version :** 1.9.0  
+**Date :** 2026-09-29  
+**Schéma DB :** v9  
+**Service Worker :** v39  
 
 ### Calcul Version
 - **MAJOR** : Refonte complète, breaking changes schéma DB
 - **MINOR** : Nouvelles fonctionnalités, migrations additives
 - **PATCH** : Corrections bugs, optimisations sans changement API
 
+### Trois nombres à tenir alignés
+`VERSION`, `CACHE_NAME` dans `sw.js`, et `SCHEMA_VERSION` dans `db.js` sont
+indépendants. Les incrémenter, c'est juger séparément « ce que le code sait
+faire », « ce que le navigateur a en cache » et « ce que la base contient ».
+
 ---
 
 ## 23. Historique des Versions
+
+### v1.9.0 (2026-09-29)
+- Module Dons complet (`dons.js`), table `dons` (schéma v9)
+- Suivi du remboursement : qui a remboursé, avec nom figé
+- 5 rapports PDF sous `js/services/pdf/`, socle unique
+- Correction XSS dans la fenêtre d'impression (3 chemins)
+- `ouvrirBase()` : ouverture explicite + contrôle de version
+- `app.js` : 3 657 → 1 092 lignes
+- 111 assertions de test
+
+Détail : [REFACTORING_REPORT.md](REFACTORING_REPORT.md)
 
 ### v1.8.2 (2026-09-27)
 - Fix affichage noms "pret en attente"
@@ -720,28 +957,32 @@ file VERSION
 ✅ Prêts entre membres  
 ✅ Activités multi-frais avec paiements échelonnés  
 ✅ Calendrier mois/semaine/jour  
-✅ Export/Import JSON complet  
-✅ Export PDF imprimable  
+✅ Sauvegarde/restauration JSON (les 15 tables, via `TABLES_APPLICATION`)  
+✅ 7 exports PDF (5 rapports + dettes + prêts)  
 ✅ Thème clair/sombre  
 ✅ PWA installable offline  
 ✅ Authentification admin  
 ✅ Verrouillage automatique  
 ✅ Recherche globale  
 ✅ Graphiques Canvas (évolution caisse, anniversaires)  
+✅ **Dons** : saisie, historique, synthèse par activité, export PDF  
+✅ **Suivi des remboursements** : montant, date, personne ayant remboursé  
+✅ **5 rapports PDF** (membre, activité, cotisation, dons, financier)  
+✅ Tests automatisés (111 assertions)  
 
 ---
 
 ## 25. Fonctionnalités en Cours
 
-🔄 Refactorisation `app.js` (3657 lignes → modules)  
-🔄 Ajout tests automatisés  
-🔄 Correction fichier VERSION  
+*(rien en cours)*
+
+Livré en v1.9.0 : découpage d'`app.js` (3 657 → 1 092 lignes), ajout des
+tests, correction du fichier `VERSION`, exports PDF refondus.
 
 ---
 
 ## 26. Fonctionnalités à Venir
 
-📋 Export Excel/CSV  
 📋 Notifications push PWA  
 📋 Synchronisation multi-appareils (optionnel)  
 📋 Rapports statistiques avancés  
@@ -796,8 +1037,21 @@ Changer le nom = perte de toutes les données utilisateurs.
 **NE PAS** modifier l'algorithme SHA-256 + salt sans migration.  
 Changement = tous les utilisateurs perdent accès admin.
 
-### ⚠️ Fonctions esc() et safeColor()
-Protections XSS critiques. Toute modification doit être auditée.
+### ⚠️ Fonction esc()
+Protection XSS critique. **Partout**, y compris dans `pdfDocumentComplet()`
+pour le `<title>` du document imprimé — c'était le trou oublié jusqu'en v1.9.0.
+`safeColor()` n'existe plus : les activités n'ont plus de couleur
+personnalisée, et les couleurs PDF viennent de `PDF_COULEURS` (valeurs en dur).
+
+### ⚠️ TABLES_APPLICATION (systeme.js)
+Liste blanche **figée** des tables incluses dans l'export JSON. **Toute table
+ajoutée à `db.js` doit y être ajoutée aussi**, sinon elle est silencieusement
+absente des sauvegardes — sans aucun message à l'utilisateur.
+
+### ⚠️ nom_rembourseur
+Volontairement figé. Il ne doit **pas** être remplacé par une lecture du membre
+courant : l'historique perdrait les cas de suppression et de renommage. Voir
+la note sous le schéma `remboursements` (§8).
 
 ### ⚠️ Service Worker CACHE_NAME
 **TOUJOURS** incrémenter après modification assets.  
@@ -807,52 +1061,28 @@ Oubli = utilisateurs gardent anciennes versions en cache.
 
 ## 29. Dette Technique
 
-### 🔴 Critique : app.js Trop Volumineux
-**Problème** : 3657 lignes, 69 fonctions, responsabilités multiples  
-**Impact** : Maintenabilité difficile, risque de régression  
-**Solution** : Découper en modules par domaine
+Le découpage d'`app.js` (3 657 lignes → 1 092) est **livré** en v1.9.0.
+Reste ci-dessous.
 
-#### Plan de Refactorisation
-```text
-app.js (3657 lignes)
-    ↓
-modules/
-├── finances.js         ← renderCaisse, renderDettes, renderPrets, openMouvement, openAjuster
-├── activites.js        ← renderActivites, renderListes, openListeDetail, openFraisForm
-├── calendrier.js       ← renderCalendrier, renderMois, renderSemaine, renderJour
-├── exports.js          ← exportPDF, exportExcel, openPrintableWindow
-├── recherche.js        ← wireGlobalSearch, runGlobalSearch
-├── graphiques.js       ← drawCaisseChart, drawMonthBarChart, drawDonutChart
-└── systeme.js          ← renderSysteme, backup, restore, reinitialiser
-```
+| Niveau | Sujet | Détail | Suite possible |
+|---|---|---|---|
+| 🟠 | `js/db.js` — 2 170 lignes | Le plus gros fichier du dépôt. C'est la couche données : le découpage doit suivre les domaines (membres, finances, activités, dons), pas être fait au hasard. | Scission par domaine |
+| 🟠 | `modules/activites.js` — 951 lignes | Un seul fichier pour le hub, les fiches, les frais et le calendrier. | Extraire `calendrier.js` |
+| 🟡 | Aucune automatisation | Les tests tournent à la main, à chaque session. | Script `npm test` / hook git — sans dépendance externe |
+| 🟡 | `TABS` dans `config.js` est du code mort | La constante annonce l'ancienne barre d'onglets (`dettes`, `plus`) alors que le HTML en définit cinq autres. Elle n'est référencée nulle part — mais `verify-globals.js` la vérifie, donc elle paraît vivante. | Supprimer, ou faire du HTML la source unique |
+| 🟡 | `RAPPORT.md` obsolète | Décrit la refonte listes → activités, désormais livrée. | Archiver |
+| 🟡 | Exports financiers | Chaque module appelle encore `rapportStats()` séparément, donc autant de requêtes que d'écrans. | Cache par session |
+| 🟢 | Historique Git redondant | Commits « fix:Mise a jour » successifs. | Conventional Commits |
 
-**Estimation** : app.js devrait tomber à ~500-800 lignes (orchestration pure).
-
-### 🟡 Moyen : Fichier VERSION Corrompu
-**Problème** : UTF-16 LE avec BOM, contient instructions Git  
-**Impact** : Pollution dépôt, confusion version  
-**Solution** : Convertir UTF-8, contenu = version seule
-
-### 🟡 Moyen : Absence .gitignore
-**Problème** : Risque commit accidentel données sensibles  
-**Impact** : Sauvegardes JSON peuvent fuiter dans dépôt  
-**Solution** : Créer `.gitignore` complet
-
-### 🟡 Moyen : Tests Absents
-**Problème** : Tests mentionnés dans RAPPORT.md mais pas dans dépôt  
-**Impact** : Régressions non détectées  
-**Solution** : Intégrer test_activites.mjs, test_ui.mjs
-
-### 🟢 Faible : Historique Git Redondant
-**Problème** : Commits "fix:Mise a jour" successifs  
-**Impact** : Lisibilité historique  
-**Solution** : Conventional Commits à l'avenir
+**Pas de `.gitignore`** : les sauvegardes JSON exportées par l'application
+sont des données réelles et se retrouvent parfois à la racine du dépôt. À créer.
 
 ---
 
 ## 30. Changelog
 
-Voir fichier dédié : [CHANGELOG.md](CHANGELOG.md)
+Voir fichier dédié : [CHANGELOG.md](CHANGELOG.md)  
+Voir aussi : [REFACTORING_REPORT.md](REFACTORING_REPORT.md)
 
 ---
 
@@ -861,12 +1091,13 @@ Voir fichier dédié : [CHANGELOG.md](CHANGELOG.md)
 ### Avant Toute Modification
 1. ✅ Lire ce fichier CLAUDE.md entièrement
 2. ✅ Vérifier les dépendances du module concerné
-3. ✅ Tester en local (avec et sans Service Worker)
-4. ✅ Vérifier console navigateur (aucune erreur)
-5. ✅ Tester offline (désactiver réseau)
-6. ✅ Incrémenter version si nécessaire
-7. ✅ Mettre à jour CHANGELOG.md
-8. ✅ Mettre à jour CLAUDE.md si changement architectural
+3. ✅ Lancer les tests : `node tools/verify-globals.js` puis les 4 harnais
+4. ✅ Tester en local, avec `Ctrl+Shift+R` (voir §12)
+5. ✅ Vérifier console navigateur (aucune erreur)
+6. ✅ Tester offline (désactiver réseau)
+7. ✅ Incrémenter version si nécessaire
+8. ✅ Mettre à jour CHANGELOG.md
+9. ✅ Mettre à jour CLAUDE.md si changement architectural
 
 ### Après Modification Assets
 1. ✅ Incrémenter `CACHE_NAME` dans `sw.js`
@@ -879,6 +1110,18 @@ Voir fichier dédié : [CHANGELOG.md](CHANGELOG.md)
 3. ✅ Tester migration depuis version N-1
 4. ✅ Documenter dans CLAUDE.md section 9
 5. ✅ Incrémenter version MINOR de l'app
+6. ⚠️ Ajouter la table à `TABLES_APPLICATION` (`modules/systeme.js`) — sinon
+   elle n'apparaît pas dans les sauvegardes JSON
+
+### Après Ajout d'un Identifiant Global
+1. ✅ L'ajouter à `tools/identifiants-attendus.txt`
+2. ✅ Lancer `node tools/verify-globals.js`
+
+### Après Ajout d'un Rapport PDF
+1. ✅ L'ajouter à `rapports.js` et à `js/services/pdf/` dans `ASSETS[]`
+2. ✅ L'enregistrer dans `tools/identifiants-attendus.txt`
+3. ✅ Ajouter un cas dans `tools/test-pdf.js` (au minimum : cas « aucune
+   donnée » et nom contenant `</title><script>`)
 
 ---
 

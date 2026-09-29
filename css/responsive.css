@@ -219,8 +219,6 @@
   #toast-host > * + * { margin-top: 8px; }
   .gsr-item > * + * { margin-left: 10px; }
   .chip-actions > * + * { margin-left: 6px; }
-  .swatch-row > * { margin: 0 8px 8px 0; }
-  .liste-card-top > * + * { margin-left: 12px; }
   .liste-detail-head > * + * { margin-left: 12px; }
 
   @media (min-width: 900px) {

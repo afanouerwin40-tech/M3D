@@ -90,7 +90,7 @@ async function runGlobalSearch(qRaw, box) {
       `<div class="gsr-item" data-go="membre" data-id="${m.id}"><span class="avatar" style="width:28px;height:28px;font-size:11px;">${initials(m)}</span>${esc(fullName(m))}</div>`,
     ).join("")) +
     section("Listes", matchListes.map((l) =>
-      `<div class="gsr-item" data-go="liste" data-id="${l.id}"><span class="liste-icon" style="width:28px;height:28px;background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone, 14)}</span>${esc(l.nom)}</div>`,
+      `<div class="gsr-item" data-go="liste" data-id="${l.id}">${esc(l.nom)}</div>`,
     ).join("")) +
     section("Cotisations", matchCotis.map((j) =>
       `<div class="gsr-item" data-go="dimanche" data-id="${j.dimanche.id}">${fmtDate(j.dimanche.date)} — ${esc(j.beneficiaires.join(", ")) || "Collecte"}</div>`,

@@ -343,6 +343,110 @@ db.version(8)
     }
   });
 
+// ---------------------------------------------------------------------------
+// v9 — DOSSIER DONS
+//
+// Un don est une RECETTE encaissée, mais d'une nature différente d'une
+// cotisation : il n'a pas de montant attendu, il n'est jamais "dû", et son
+// montant est libre. C'est pourquoi il ne peut pas vivre dans `paiements`
+// (dont le modèle est "montant attendu / montant payé", cf. le commentaire
+// de getStatutPaiementActivite) ni dans `liste_paiements`, qui calcule une
+// somme attendue. Une table dédiée est donc créée.
+//
+// `id_activite` est INDEXÉ : les dons se filtrent par activité. Il est
+// volontairement vide (et non `""`) quand le don est général, ce que la
+// migration ci-dessous garantit pour les enregistrements futurs.
+//
+// Aucun upgrade() n'est nécessaire : la table est neuve et vide. Les
+// données existantes (membres, paiements, caisse...) ne sont pas touchées.
+// ---------------------------------------------------------------------------
+db.version(9)
+  .stores({
+    membres: "id, nom, prenom, statut, mois_anniversaire",
+    sessions: "id, nom",
+    dimanches: "id, id_session, date, statut",
+    anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+    paiements: "id, id_dimanche, id_membre",
+    remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+    caisse_mouvements: "id, date, type, categorie",
+    parametres: "cle",
+    activity_log: "++seq, date, entite, action",
+    listes: "id, nom, date, archivee, type",
+    liste_membres: "id, id_liste, id_membre",
+    prets_membres:
+      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+    liste_frais: "id, id_liste",
+    liste_paiements: "id, id_liste, id_membre",
+    dons: "id, id_activite, id_membre, date",
+  })
+  .upgrade(async () => {
+    // Rien a migrer : la table est creee vide. Ce upgrade() existe pour
+    // garder la meme forme que les versions precedentes et pour offrir un
+    // point d'ancrage explicite si un jour un don existant doit etre
+    // rattache a une activite.
+  });
+
+// SCHEMA_VERSION doit rester aligne sur le dernier db.version(N) declare
+// ci-dessus. Il sert de garde-fou : si un jour une version est ajoutee et
+// qu'on oublie d'ouvrir la base explicitement, cette fonction le signale
+// au lieu de laisser une transaction echouer plus tard sur un
+// "objectStore was not found" qui ne dit rien de sa source.
+const SCHEMA_VERSION = 9;
+
+/**
+ * Ouvre la base et verifie que le schema sur disque correspond au schema
+ * attendu. A appeler AVANT tout usage de db.* : sans cela, Dexie ouvre la
+ * base en arriere-plan a la premiere operation, l'application demarre
+ * immediatement, et une migration bloquée (onglet ouvert ailleurs, service
+ * worker qui sert un vieux db.js) se manifeste beaucoup plus tard par une
+ * erreur qui ne mentionne ni le fichier ni la ligne.
+ */
+async function ouvrirBase() {
+  // Une base bloquee (un autre onglet tient une connexion ouverte sur une
+  // version anterieure) laisse la promesse ddb.open() en attente indefinie :
+  // ni resolvee, ni rejetee. Sans ce delai, l'application resterait figee sur
+  // un ecran vide, sans le moindre message.
+  let bloque = false;
+  const surBloque = () => { bloque = true; };
+  db.on("blocked", surBloque);
+
+  const delai = new Promise((_, rejeter) =>
+    setTimeout(
+      () => rejeter(new Error(bloque
+        ? "Mise a jour de la base bloquee : un autre onglet de l'application " +
+          "est ouvert. Fermez-le, puis rechargez la page."
+        : "Ouverture de la base trop lente (> 10 s).")),
+      10000,
+    ),
+  );
+
+  try {
+    await Promise.race([db.open(), delai]);
+  } catch (err) {
+    console.error(
+      "[M3D] Ouverture de la base impossible.\n" +
+        "Si le probleme persiste : DevTools > Application > Service Worker > " +
+        "« Desinstaller », puis rechargez avec Ctrl+Shift+R (le service " +
+        "worker sert un ancien db.js tant que le cache n'est pas invalide).",
+      err,
+    );
+    throw err;
+  } finally {
+    db.off("blocked", surBloque);
+  }
+
+  if (db.verno < SCHEMA_VERSION) {
+    const err = new Error(
+      "Schema de base obsolete : la base est en v" + db.verno +
+        " mais le code attend la v" + SCHEMA_VERSION +
+        ". Rechargez la page (Ctrl+Shift+R) pour charger le dernier db.js.",
+    );
+    console.error("[M3D] " + err.message);
+    throw err;
+  }
+  return db;
+}
+
 // depensesParCategorie : ventilation des sorties de caisse par categorie,
 // utilisee pour le petit recapitulatif dans l'onglet Caisse. Les mouvements
 // d'ajustement (voir ajusterCaisse) portent la categorie "Divers" comme
@@ -468,6 +572,7 @@ async function reinitialiserToutesDonnees() {
       db.liste_paiements,
       db.prets_membres,
       db.activity_log,
+      db.dons,
     ],
     async () => {
       await Promise.all([
@@ -484,6 +589,7 @@ async function reinitialiserToutesDonnees() {
         db.liste_paiements.clear(),
         db.prets_membres.clear(),
         db.activity_log.clear(),
+        db.dons.clear(),
       ]);
 
       await setParam("montant_cotisation_defaut", 500);
@@ -594,24 +700,43 @@ async function dettesList() {
   const dims = await db.dimanches.toArray();
   const dimById = Object.fromEntries(dims.map((d) => [d.id, d]));
   const remb = await db.remboursements.toArray();
-  const rembByPaiement = new Set(remb.map((r) => r.id_paiement_concerne));
+  // Index par paiement concerne : plusieurs remboursements pour un meme
+  // paiement sont impossibles (l'ecran ne propose l'action que sur une dette
+  // impayee), le premier suffit donc.
+  const rembByPaiement = {};
+  for (const r of remb) {
+    if (!rembByPaiement[r.id_paiement_concerne]) rembByPaiement[r.id_paiement_concerne] = r;
+  }
   const membres = await db.membres.toArray();
   const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
 
   const rows = [];
   for (const p of impayes) {
-    const rembourse = rembByPaiement.has(p.id);
+    const r = rembByPaiement[p.id];
     const dim = dimById[p.id_dimanche];
+    // Le nom du remboursementeur est une COPIE figee au moment du
+    // remboursement (remb.nom_rembourseur). Si le membre a ete depuis
+    // renomme ou supprime, l'historique affiche ce qu'il portait a l'epoque
+    // plutot que de perdre l'information. Les remboursements enregistres
+    // avant l'ajout de ce champ n'ont pas de copie : on retombe alors sur le
+    // membre, et a defaut sur le debiteur.
+    const rembMember = r && r.id_membre_rembourseur ? memById[r.id_membre_rembourseur] : null;
+    const rembPar = r
+      ? r.nom_rembourseur || (rembMember ? fullName(rembMember) : (memById[p.id_membre] ? fullName(memById[p.id_membre]) : "?"))
+      : null;
+
     rows.push({
       id_paiement: p.id,
       id_membre: p.id_membre,
-      membre: memById[p.id_membre]
-        ? `${memById[p.id_membre].nom} ${memById[p.id_membre].prenom}`.trim()
-        : "?",
+      membre: memById[p.id_membre] ? fullName(memById[p.id_membre]) : "?",
       telephone: memById[p.id_membre] ? memById[p.id_membre].telephone : "",
       date: dim ? dim.date : "?",
       montant: p.montant_attendu,
-      statut: rembourse ? "Remboursee" : "Impayee",
+      statut: r ? "Remboursee" : "Impayee",
+      // Details du remboursement, absents des dettes encore impayees.
+      remb_montant: r && r.montant != null ? r.montant : null,
+      remb_date: r ? r.date_remboursement || null : null,
+      remb_par: rembPar,
     });
   }
   return rows.sort((a, b) => b.date.localeCompare(a.date));
@@ -622,6 +747,136 @@ async function totalDettesImpayees() {
   return rows
     .filter((r) => r.statut === "Impayee")
     .reduce((a, r) => a + r.montant, 0);
+}
+
+// ---------------------------------------------------------------------------
+// DONS
+//
+// Un don est une recette libre : aucun montant n'est attendu, donc rien ne
+// peut être "impayé". Le total et le nombre de donateurs sont TOUJOURS
+// recalcules a partir de la table `dons` -- jamais stockes -- sur le meme
+// principe que les dettes (cf. dettesList). Corriger un don, c'est modifier
+// sa ligne ; le total suit automatiquement.
+// ---------------------------------------------------------------------------
+
+/**
+ * Liste les dons, du plus recent au plus ancien, avec le nom du donateur
+ * et le nom de l'activite resolus pour l'affichage.
+ *
+ * @param {object} [options]
+ * @param {string} [options.idActivite] - Restreint a une activite. La
+ *   chaine vide "" signifie "aucune activite" (dons generaux) : c'est une
+ *   valeur de filtre legitime, pas une absence de filtre.
+ * @returns {Promise<Array<object>>} Lignes de don enrichies.
+ */
+async function donsList({ idActivite = null } = {}) {
+  const base =
+    idActivite === null
+      ? await db.dons.toArray()
+      : await db.dons.where("id_activite").equals(idActivite).toArray();
+  const [membres, listes] = await Promise.all([
+    db.membres.toArray(),
+    db.listes.toArray(),
+  ]);
+  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
+  const listeById = Object.fromEntries(listes.map((l) => [l.id, l]));
+
+  return base
+    .map((d) => ({
+      ...d,
+      donateur: memById[d.id_membre]
+        ? `${memById[d.id_membre].nom} ${memById[d.id_membre].prenom}`.trim()
+        : "Anonyme",
+      activite: listeById[d.id_activite] ? listeById[d.id_activite].nom : "",
+    }))
+    .sort((a, b) => (b.date || "").localeCompare(a.date || ""));
+}
+
+/**
+ * Cree un don. La validation de fond (montant strictement positif, membre
+ * obligatoire) est faite par l'appelant pour pouvoir afficher un message
+ * precis ; ici on refuse seulement ce qui corromprait la donnee.
+ *
+ * @param {object} don
+ * @param {number} don.montant - Montant du don, en entier positif.
+ * @param {string} don.id_membre - Identifiant du donateur (obligatoire).
+ * @param {string} [don.id_activite] - Activite liee, ou "" si don general.
+ * @param {string} [don.date] - Date du don au format ISO (AAAA-MM-JJ).
+ * @param {string} [don.commentaire] - Note libre, facultative.
+ * @returns {Promise<string>} Identifiant du don cree.
+ */
+async function creerDon({ montant, id_membre, id_activite, date, commentaire }) {
+  const m = Math.round(Number(montant));
+  if (!Number.isFinite(m) || m <= 0)
+    throw new Error("Le montant du don doit etre un nombre superieur a zero.");
+  if (!id_membre) throw new Error("Le donateur est obligatoire.");
+
+  const id = uid();
+  await db.dons.add({
+    id,
+    id_membre,
+    id_activite: id_activite || "",
+    montant: m,
+    date: date || todayISO(),
+    commentaire: (commentaire || "").trim(),
+    created_at: new Date().toISOString(),
+  });
+  await log("don", "cree", `${m} — ${id_activite || "don general"}`);
+  return id;
+}
+
+/**
+ * Modifie un don existant. Meme contrat que creerDon, mais conserve les
+ * champs non transmis au lieu de les effacer.
+ *
+ * @param {string} id - Identifiant du don a modifier.
+ * @param {object} patch - Champs a mettre a jour.
+ * @returns {Promise<void>}
+ */
+async function modifierDon(id, patch) {
+  if ("montant" in patch) {
+    const m = Math.round(Number(patch.montant));
+    if (!Number.isFinite(m) || m <= 0)
+      throw new Error("Le montant du don doit etre un nombre superieur a zero.");
+    patch.montant = m;
+  }
+  if ("id_activite" in patch) patch.id_activite = patch.id_activite || "";
+  if ("date" in patch) patch.date = patch.date || todayISO();
+  if ("commentaire" in patch) patch.commentaire = (patch.commentaire || "").trim();
+
+  await db.dons.update(id, patch);
+  await log("don", "modifie", id);
+}
+
+/**
+ * Supprime un don. Le journal d'activite conserve la trace : la suppression
+ * reste traçable meme si la ligne, elle, a disparu.
+ *
+ * @param {string} id - Identifiant du don a supprimer.
+ * @returns {Promise<void>}
+ */
+async function supprimerDon(id) {
+  await db.dons.delete(id);
+  await log("don", "supprime", id);
+}
+
+/**
+ * Synthese d'un ensemble de dons : total, nombre de donateurs distincts et
+ * moyenne. Utilisee par l'ecran d'activite comme par le rapport PDF.
+ *
+ * @param {Array<object>} lignes - Resultat de donsList, ou toute liste de
+ *   lignes portant au minimum un champ `montant`.
+ * @returns {{total: number, nbDons: number, nbDonateurs: number, moyenne: number}}
+ */
+function syntheseDons(lignes) {
+  const total = lignes.reduce((a, d) => a + (Number(d.montant) || 0), 0);
+  const donateurs = new Set(lignes.map((d) => d.id_membre).filter(Boolean));
+  return {
+    total,
+    nbDons: lignes.length,
+    nbDonateurs: donateurs.size,
+    moyenne: donateurs.size ? Math.round(total / donateurs.size) : 0,
+  };
 }
 
 async function caisseSolde() {
@@ -739,9 +994,9 @@ async function prochainesActivites(limite = 5) {
 // evenementsEntreDates : fusionne activites et anniversaires en une liste
 // unique d'"evenements de calendrier" pour les vues Mois/Semaine/Jour.
 // On renvoie volontairement l'objet "liste" ou "membre" BRUT dans chaque
-// evenement plutot que des champs deja mis en forme (nom complet, couleur
-// validee...) : ces mises en forme dependent de helpers d'affichage
-// (fullName, safeColor) qui vivent dans app.js, pas ici. db.js ne connait
+// evenement plutot que des champs deja mis en forme (nom complet...) :
+// ces mises en forme dependent de helpers d'affichage
+// (fullName) qui vivent dans app.js, pas ici. db.js ne connait
 // que les donnees, jamais leur presentation.
 async function evenementsEntreDates(dateDebutISO, dateFinISO) {
   const [listes, membres] = await Promise.all([
@@ -1421,8 +1676,6 @@ async function creerListe({
   description,
   date,
   date_limite,
-  couleur,
-  icone,
   montant_demande,
   notes,
   heure,
@@ -1440,8 +1693,6 @@ async function creerListe({
     // date_limite : facultative -- une activite sans date limite reste
     // ouverte indefiniment (voir activiteEstOuverte).
     date_limite: date_limite || null,
-    couleur: couleur || "#6366F1",
-    icone: icone || "star",
     montant_demande: montant_demande || null,
     notes: (notes || "").trim(),
     archivee: false,
@@ -1800,7 +2051,7 @@ async function statistiquesActivite(idListe) {
 
 // ---------------------------------------------------------------
 // RAPPORT GENERAL — toutes les statistiques utilisees par le tableau de
-// bord et les exports (PDF/Excel) du rapport complet. Rassemble ici pour
+// bord et les exports PDF du rapport complet. Rassemble ici pour
 // n'avoir cette logique ecrite qu'une seule fois.
 // ---------------------------------------------------------------
 async function rapportStats() {

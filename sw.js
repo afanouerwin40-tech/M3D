@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v36"; // v36 : ajout des modules recherche, graphiques, exports et systeme (extraits de app.js)
+const CACHE_NAME = "m3d-cache-v39"; // v39 : services PDF (socle + composants + 5 rapports)
 
 const ASSETS = [
   "./",
@@ -26,6 +26,7 @@ const ASSETS = [
   "./js/modules/cotisations.js",
   "./js/modules/finances.js",
   "./js/modules/activites.js",
+  "./js/modules/dons.js",
   "./js/modules/recherche.js",
   "./js/modules/graphiques.js",
   "./js/modules/exports.js",
@@ -37,6 +38,10 @@ const ASSETS = [
   // Bibliothèques et polices externes
   "https://cdnjs.cloudflare.com/ajax/libs/dexie/3.2.4/dexie.min.js",
   "https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap",
+  // Services PDF
+  "./js/services/pdf/socle.js",
+  "./js/services/pdf/composants.js",
+  "./js/services/pdf/rapports.js",
 ];
 
 self.addEventListener("install", (event) => {

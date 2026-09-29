@@ -1049,6 +1049,21 @@ initVisibilityWatcher(() => {
 
 // Bootstrap asynchrone
 (async function start() {
+  // La base doit etre ouverte ET a jour de schema avant la moindre lecture.
+  // Sans cette attente explicite, Dexie ouvre en arriere-plan a la premiere
+  // requete et une migration bloquee echoue plus tard, sans indication de
+  // source. Voir ouvrirBase() dans db.js.
+  try {
+    await ouvrirBase();
+  } catch (err) {
+    document.getElementById("app-content").innerHTML =
+      '<div class="empty"><h2>Base de donnees indisponible</h2>' +
+      "<p>Impossible d'ouvrir la base locale. Fermez les autres onglets de " +
+      "l'application puis rechargez la page.</p>" +
+      "<p class=\"muted\">Detail : " + esc(err && err.message ? err.message : String(err)) + "</p></div>";
+    return;
+  }
+
   await seedIfEmpty();
 
   // Enregistrement du Service Worker PWA

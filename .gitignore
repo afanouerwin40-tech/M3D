@@ -1,170 +1,55 @@
-# M3D Gestion - Fichiers à ignorer
+# ============================================================
+# .gitignore - M3D Gestion
+# ============================================================
+# Ce fichier indique a git quels fichiers et dossiers
+# ne doivent pas etre envoyes sur le depot distant (GitHub).
+# ============================================================
 
-# ===================================================================
-# Dépendances Node.js (si jamais utilisées pour tooling)
-# ===================================================================
-node_modules/
-package-lock.json
-yarn.lock
+# --- Outils de test locaux ---
+# Le dossier tools/ contient des harnais de test Node.js.
+# Ils tournent uniquement en local et ne font pas partie
+# de l'application distribuee aux utilisateurs.
+tools/
 
-# ===================================================================
-# Environnement et Configuration Locale
-# ===================================================================
-.env
-.env.*
-!.env.example
+# --- Fichier de configuration de l'assistant IA ---
+# Ce dossier est cree par Claude Code et contient
+# des donnees de session locales sans interet pour le depot.
+.claude/
 
-# ===================================================================
-# Données Utilisateurs et Sauvegardes
-# ===================================================================
-# Sauvegardes JSON exportées contiennent des données sensibles
-sauvegarde-*.json
-backup-*.json
-export-*.json
-m3d-backup-*.json
-m3d-export-*.json
+# --- Sauvegardes JSON exportees depuis l'application ---
+# Les exports JSON contiennent les donnees reelles des utilisateurs.
+# Ils ne doivent jamais se retrouver dans un depot public.
+m3d_backup_*.json
+backup_*.json
+export_*.json
 
-# Anciennes sauvegardes
-*.backup
-*.bak
-
-# ===================================================================
-# Fichiers Système
-# ===================================================================
+# --- Fichiers systeme ---
 # macOS
 .DS_Store
-.AppleDouble
-.LSOverride
+.DS_Store?
 ._*
+.Spotlight-V8
+.Trashes
 
 # Windows
 Thumbs.db
-Thumbs.db:encryptable
 ehthumbs.db
-ehthumbs_vista.db
 Desktop.ini
 $RECYCLE.BIN/
 
 # Linux
 *~
-.directory
-.Trash-*
 
-# ===================================================================
-# Éditeurs et IDEs
-# ===================================================================
-# Visual Studio Code
-.vscode/
-!.vscode/extensions.json
-!.vscode/settings.json.example
-*.code-workspace
-
-# JetBrains (WebStorm, IntelliJ)
+# --- Editeurs ---
+.vscode/settings.json
 .idea/
-*.iml
-*.iws
-
-# Sublime Text
-*.sublime-project
-*.sublime-workspace
-
-# Vim
 *.swp
 *.swo
-*~
 
-# Emacs
-\#*\#
-.\#*
-
-# ===================================================================
-# Logs et Temporaires
-# ===================================================================
+# --- Logs ---
 *.log
 npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
 
-# Fichiers temporaires
-*.tmp
-*.temp
-tmp/
-temp/
-
-# ===================================================================
-# Build et Distribution (au cas où)
-# ===================================================================
-dist/
-build/
-out/
-
-# ===================================================================
-# Tests et Coverage (si implémentés)
-# ===================================================================
-coverage/
-.nyc_output/
-*.lcov
-
-# ===================================================================
-# Captures d'écran et Médias de Test
-# ===================================================================
-# Ne pas ignorer les assets officiels du projet
-screenshots/
-test-images/
-*.test.jpg
-*.test.png
-
-# ===================================================================
-# Documentation Générée
-# ===================================================================
-docs/api/
-docs/_build/
-
-# ===================================================================
-# Fichiers Diff et Patches
-# ===================================================================
-*.diff
-*.patch
-*.orig
-*.rej
-
-# ===================================================================
-# Fichiers Spécifiques au Projet
-# ===================================================================
-# Fichiers de travail temporaires mentionnés dans le code
-*.work
-*.wip
-
-# Anciennes versions avant refactorisation (au cas où)
-*.old.js
-*.backup.js
-*_old.*
-*_backup.*
-
-# ===================================================================
-# Base de Données de Test
-# ===================================================================
-# IndexedDB vit dans le navigateur, mais au cas où des dumps locaux
-test-db/
-*.db.json
-
-# ===================================================================
-# Certificats et Clés (ne devraient jamais être ici)
-# ===================================================================
-*.pem
-*.key
-*.cert
-*.crt
-*.p12
-*.pfx
-
-# ===================================================================
-# Divers
-# ===================================================================
-.cache/
-.parcel-cache/
-.next/
-.nuxt/
-.vuepress/dist/
+# --- Node.js (si utilise en local pour les tests uniquement) ---
+node_modules/
+package-lock.json

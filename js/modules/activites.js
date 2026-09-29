@@ -161,7 +161,7 @@ async function renderCalendrierMois() {
     ].filter(Boolean).join(" ");
 
     const dotsHTML = evts.slice(0, 3).map((e) => {
-      const color = e.type === "activite" ? safeColor(e.liste.couleur) : "var(--warning)";
+      const color = e.type === "activite" ? "var(--accent)" : "var(--warning)";
       return `<span class="cal-dot" style="background:${color};"></span>`;
     }).join("");
 
@@ -269,7 +269,6 @@ function evenementsListHTML(evts) {
 
       return `
         <div class="row" data-evt-type="activite" data-id="${l.id}">
-          <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
           <div class="info">
             <div class="name">${esc(l.nom)} <span class="badge ${STATUT_ACTIVITE_BADGE[statutEvt]}" style="margin-left:4px;">${STATUT_ACTIVITE_LABEL[statutEvt]}</span></div>
             <div class="meta">${heureLieu || "Activite"}</div>
@@ -324,6 +323,13 @@ async function renderActivites() {
         <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
       </div>
     </div>
+    <div class="card list-card" id="activitesDonsBox" style="margin-bottom:12px;cursor:pointer;">
+      <div class="row" style="border:none;padding:2px 4px;">
+        <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3v18M7 7h7.5a2.5 2.5 0 0 1 0 5H9.5a2.5 2.5 0 0 0 0 5H17"/></svg></span>
+        <div class="info"><div class="name">Dons</div><div class="meta">Dons recus, rattaches ou non a une activite</div></div>
+        <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
+      </div>
+    </div>
     <div class="card list-card" id="activitesCalendrierBox" style="margin-bottom:24px;cursor:pointer;">
       <div class="row" style="border:none;padding:2px 4px;">
         <span class="liste-icon" style="background:var(--accent-light);color:var(--accent);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M8 2v3M16 2v3M3 9h18"/><rect x="3" y="3" width="18" height="18" rx="2"/></svg></span>
@@ -334,6 +340,7 @@ async function renderActivites() {
   `;
 
   document.getElementById("activitesListesBox").addEventListener("click", renderListes);
+  document.getElementById("activitesDonsBox").addEventListener("click", renderDons);
   document.getElementById("activitesCalendrierBox").addEventListener("click", renderCalendrier);
 }
 
@@ -395,14 +402,11 @@ async function renderListesList() {
       const statutEvt = getStatutActivite(l);
       const lieuHeure = [l.heure ? esc(l.heure) : "", l.lieu ? esc(l.lieu) : ""].filter(Boolean).join(" &middot; ");
 
-      return `<div class="card liste-card" data-id="${l.id}" style="border-left:4px solid ${safeColor(l.couleur)};">
-        <div class="liste-card-top">
-          <span class="liste-icon" style="background:${safeColor(l.couleur)}22;color:${safeColor(l.couleur)};">${listeIconSVG(l.icone)}</span>
-          <div class="info">
-            <div class="name">${esc(l.nom)} <span class="badge ${STATUT_ACTIVITE_BADGE[statutEvt]}" style="margin-left:4px;">${STATUT_ACTIVITE_LABEL[statutEvt]}</span>${fermee ? ` <span class="badge badge-no">Cloturee</span>` : ""}</div>
-            <div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}</div>
-            ${lieuHeure ? `<div class="meta">${lieuHeure}</div>` : ""}
-          </div>
+      return `<div class="card liste-card" data-id="${l.id}">
+        <div class="info">
+          <div class="name">${esc(l.nom)} <span class="badge ${STATUT_ACTIVITE_BADGE[statutEvt]}" style="margin-left:4px;">${STATUT_ACTIVITE_LABEL[statutEvt]}</span>${fermee ? ` <span class="badge badge-no">Cloturee</span>` : ""}</div>
+          <div class="meta">${fmtDate(l.date)} &middot; ${membres.length} participant${membres.length > 1 ? "s" : ""}</div>
+          ${lieuHeure ? `<div class="meta">${lieuHeure}</div>` : ""}
         </div>
         ${l.description ? `<div class="small-note" style="margin-top:6px;">${esc(l.description)}</div>` : ""}
         ${
@@ -442,9 +446,6 @@ async function openListeForm(liste = null) {
     return `<option value="${k}"${selected ? " selected" : ""}>${TYPE_ACTIVITE_LABELS[k]}</option>`;
   }).join("");
 
-  const couleurDepart = isEdit ? safeColor(liste.couleur) : LISTE_COULEURS[0];
-  const iconeDepart = isEdit && LISTE_ICONES[liste.icone] ? liste.icone : LISTE_ICONE_KEYS[0];
-
   const ov = openSheet(`
     <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
     <h3>${isEdit ? "Modifier l'activite" : "Nouvelle activite"}</h3>
@@ -461,33 +462,12 @@ async function openListeForm(liste = null) {
       <div class="field"><label for="l_budget">Budget previsionnel (facultatif)</label><input id="l_budget" type="number" min="0" placeholder="FCFA" value="${isEdit && liste.budget != null ? liste.budget : ""}"></div>
     </div>
     <div class="field"><label for="l_date_limite">Date limite (facultatif)</label><input id="l_date_limite" type="date" value="${isEdit && liste.date_limite ? liste.date_limite : ""}"></div>
-    <div class="field"><label>Couleur</label><div class="swatch-row" id="l_couleur_row">${LISTE_COULEURS.map((c) => `<button type="button" class="swatch ${c === couleurDepart ? "active" : ""}" data-c="${c}" style="background:${c};" aria-label="Couleur ${c}"></button>`).join("")}</div></div>
-    <div class="field"><label>Icone</label><div class="swatch-row" id="l_icone_row">${LISTE_ICONE_KEYS.map((k) => `<button type="button" class="swatch-icon ${k === iconeDepart ? "active" : ""}" data-i="${k}" aria-label="Icone ${k}">${listeIconSVG(k, 18)}</button>`).join("")}</div></div>
     <div class="field"><label for="l_notes">Notes</label><input id="l_notes" type="text" placeholder="Facultatif" value="${isEdit ? esc(liste.notes || "") : ""}"></div>
     ${!isEdit ? `<div class="small-note">Les frais (participation, transport...) se configurent depuis la fiche de l'activite. Une activite sans frais sert a suivre des participants.</div>` : ""}
     <button class="btn btn-primary" id="l_save" style="margin-top:12px;">${isEdit ? "Enregistrer" : "Creer l'activite"}</button>
   `);
 
   ov.querySelector("[data-close]").addEventListener("click", closeSheet);
-
-  let couleur = couleurDepart;
-  let icone = iconeDepart;
-
-  ov.querySelectorAll("#l_couleur_row .swatch").forEach((b) =>
-    b.addEventListener("click", () => {
-      ov.querySelectorAll("#l_couleur_row .swatch").forEach((x) => x.classList.remove("active"));
-      b.classList.add("active");
-      couleur = /** @type {HTMLElement} */ (b).dataset.c;
-    }),
-  );
-
-  ov.querySelectorAll("#l_icone_row .swatch-icon").forEach((b) =>
-    b.addEventListener("click", () => {
-      ov.querySelectorAll("#l_icone_row .swatch-icon").forEach((x) => x.classList.remove("active"));
-      b.classList.add("active");
-      icone = /** @type {HTMLElement} */ (b).dataset.i;
-    }),
-  );
 
   ov.querySelector("#l_save").addEventListener("click", async () => {
     const nomInput = /** @type {HTMLInputElement} */ (ov.querySelector("#l_nom"));
@@ -512,8 +492,6 @@ async function openListeForm(liste = null) {
       description: /** @type {HTMLInputElement} */ (ov.querySelector("#l_desc")).value.trim(),
       date,
       date_limite: dateLimite,
-      couleur,
-      icone,
       notes: /** @type {HTMLInputElement} */ (ov.querySelector("#l_notes")).value.trim(),
       heure: /** @type {HTMLInputElement} */ (ov.querySelector("#l_heure")).value || null,
       lieu: /** @type {HTMLInputElement} */ (ov.querySelector("#l_lieu")).value.trim(),
@@ -568,7 +546,7 @@ async function renderListeDetailSheet(id) {
 
   const html = `
     <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
-    <div class="liste-detail-head" style="border-left:4px solid ${safeColor(l.couleur)};padding-left:12px;">
+    <div class="liste-detail-head" style="border-left:4px solid var(--accent);padding-left:12px;">
       <div>
         <h3 style="margin:0;">${esc(l.nom)}</h3>
         <div class="small-note" style="margin:2px 0 0;">${fmtDate(l.date)}${l.date_limite ? " &middot; Limite : " + fmtDate(l.date_limite) : ""}${l.archivee ? " &middot; Archivee" : ""}</div>
@@ -585,6 +563,9 @@ async function renderListeDetailSheet(id) {
     <div id="ld_frais"></div>
     ${!frais.length ? `<div class="small-note">Aucun frais defini : fonctionne comme une simple liste de participants.</div>` : ""}
     ${l.notes ? `<div class="detail-row"><span class="k">Notes</span><span class="v">${esc(l.notes)}</span></div>` : ""}
+
+    <div class="section-title" style="margin-top:16px;"><h2>Dons</h2><button class="link" id="ld_add_don">+ Ajouter</button></div>
+    <div id="ld_dons"></div>
 
     <div class="section-title" style="margin-top:16px;"><h2>Participants</h2></div>
     <div class="small-note" style="margin-bottom:6px;">${frais.length ? "Coche les membres concernes, puis les frais associes." : "Coche les membres participants."}</div>
@@ -621,6 +602,9 @@ async function renderListeDetailSheet(id) {
 
   ov.querySelector("#ld_edit").addEventListener("click", () => openListeForm(l));
   ov.querySelector("#ld_add_frais").addEventListener("click", () => openFraisForm(id));
+  ov.querySelector("#ld_add_don").addEventListener("click", () =>
+    openDonForm(id, null, () => renderDonsActivite(id, ov.querySelector("#ld_dons"))),
+  );
   ov.querySelector("#ld_export_pdf").addEventListener("click", () => exportListePDF(id));
 
   ov.querySelector("#ld_cloture").addEventListener("click", async () => {
@@ -738,6 +722,12 @@ async function refreshListeDetailBody(id) {
         renderListeDetailSheet(id);
       }),
     );
+  }
+
+  // Dons recus pour cette activite
+  const donsBox = ov.querySelector("#ld_dons");
+  if (donsBox) {
+    await renderDonsActivite(id, donsBox);
   }
 
   // Tableau des participants

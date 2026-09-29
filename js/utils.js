@@ -124,17 +124,6 @@ const esc = (s) =>
       })[c],
   );
 
-/**
- * Valide qu'une couleur est un code hexadécimal strict au format #RRGGBB.
- * Empêche l'injection d'attributs de style malveillants via des données corrompues.
- *
- * @param {string} c - Chaîne de couleur à valider.
- * @param {string} [fallback="#6366F1"] - Couleur de repli sécurisée.
- * @returns {string} Couleur validée ou couleur par défaut.
- */
-const safeColor = (c, fallback = "#6366F1") =>
-  typeof c === "string" && /^#[0-9a-fA-F]{6}$/.test(c) ? c : fallback;
-
 // ============================================================================
 // IDENTIFIANTS UNIQUES
 // ============================================================================
