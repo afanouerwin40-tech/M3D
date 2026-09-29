@@ -2,7 +2,7 @@
 // L'application fonctionne 100% hors-ligne une fois installée.
 // Le cache est invalidé et recréé à chaque incrément de version (CACHE_NAME).
 
-const CACHE_NAME = "m3d-cache-v35"; // v35 : ajout du module activites.js au cache (extrait de app.js)
+const CACHE_NAME = "m3d-cache-v36"; // v36 : ajout des modules recherche, graphiques, exports et systeme (extraits de app.js)
 
 const ASSETS = [
   "./",
@@ -26,6 +26,10 @@ const ASSETS = [
   "./js/modules/cotisations.js",
   "./js/modules/finances.js",
   "./js/modules/activites.js",
+  "./js/modules/recherche.js",
+  "./js/modules/graphiques.js",
+  "./js/modules/exports.js",
+  "./js/modules/systeme.js",
   "./js/app.js",
   // Icônes PWA
   "./icons/icon-192.png",
