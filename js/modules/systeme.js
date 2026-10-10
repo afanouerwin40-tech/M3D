@@ -61,9 +61,8 @@ async function renderSysteme() {
     <div class="card" style="margin-bottom:24px;">
       <button class="btn btn-ghost" id="exportMembresPdfBtn" style="margin-bottom:10px;">Membres — PDF</button>
       <button class="btn btn-ghost" id="exportDettesPdfBtn" style="margin-bottom:10px;">Dettes du groupe — PDF</button>
-      <button class="btn btn-ghost" id="exportPretsPdfBtn" style="margin-bottom:10px;">Prets entre membres — PDF</button>
       <button class="btn btn-ghost" id="exportRapportPdfBtn" style="margin-bottom:10px;">Rapport complet — PDF</button>
-      <div class="small-note">Documents prets a etre imprimes ou partages (PDF). Les prets personnels sont exportes separement des dettes du groupe.</div>
+      <div class="small-note">Documents a etre imprimes ou partages (PDF). Les exports financiers sont disponibles depuis cet ecran.</div>
     </div>
 
     <div class="section-title"><h2>Apparence</h2></div>
@@ -125,7 +124,7 @@ async function renderSysteme() {
   document.getElementById("importJsonInput").addEventListener("change", importBackup);
   document.getElementById("exportMembresPdfBtn").addEventListener("click", exportMembresPDF);
   document.getElementById("exportDettesPdfBtn").addEventListener("click", exportDettesPDF);
-  document.getElementById("exportPretsPdfBtn").addEventListener("click", exportPretsMembresPDF);
+  // Export PDF des prêts supprimé — fonctionnalité retirée
   document.getElementById("exportRapportPdfBtn").addEventListener("click", exportRapportPDF);
 
   document.getElementById("btnResetAllData").addEventListener("click", async () => {

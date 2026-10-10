@@ -248,7 +248,7 @@ async function renderAccueil() {
     prochainAnniversaire(),
     listesAll({ archiveesSeulement: false }),
     membresIrreguliers(),
-    pretsMembres({ nonRembourseSeulement: true }),
+    Promise.resolve([]), // prets entre membres supprimés — données historiques conservées en base mais non utilisées
     getParam("derniere_sauvegarde", null),
     getOrCreateSessionActive(),
     membresAnniversaireCeMoisRestants(new Date().getMonth() + 1),
@@ -1144,15 +1144,8 @@ async function openWeekDetail(dimId) {
 
       await marquerPaiement(pid, nextPaye);
 
-      if (!nextPaye) {
-        const prets = await db.prets_membres.where("id_paiement").equals(pid).toArray();
-        for (const pr of prets) await db.prets_membres.delete(pr.id);
-      }
-
       await refreshWeekRows();
       notifyAutresEcrans();
-    } else if (pretBtn) {
-      openPretPicker(pretBtn.dataset.pret);
     }
   });
 
@@ -1175,12 +1168,9 @@ async function openWeekDetail(dimId) {
    * être modifié par une opération d'affichage.
    */
   async function refreshWeekRows() {
-    const [freshPaiements, freshPrets] = await Promise.all([
-      db.paiements.where("id_dimanche").equals(dimId).toArray(),
-      db.prets_membres.where("id_dimanche").equals(dimId).toArray(),
-    ]);
+    const freshPaiements = await db.paiements.where("id_dimanche").equals(dimId).toArray();
 
-    preteurParPaiement = Object.fromEntries(freshPrets.map((pr) => [pr.id_paiement, pr.id_preteur]));
+    preteurParPaiement = {};
     rowsBox.innerHTML = freshPaiements.slice().sort(triParNom).map((p) => cotisationsModule.paiementRowHTML(p, memById, preteurParPaiement, esc, fullName)).join("");
 
     const newTotal = freshPaiements.reduce((a, p) => a + p.montant_paye, 0);
@@ -1246,44 +1236,7 @@ async function openWeekDetail(dimId) {
    * peut dater du dernier rafraîchissement — sans conséquence ici, puisqu'un
    * prêt ne modifie pas qui participe.
    */
-  function openPretPicker(idPaiement) {
-    const autresParticipants = paiements
-      .filter((p) => p.id !== idPaiement)
-      .map((p) => memById[p.id_membre])
-      .filter(Boolean);
-
-    const pretOv = openSheet(`
-      <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
-      <h3>Qui a avance l'argent ?</h3>
-      <div class="small-note" style="margin-bottom:10px;">La cotisation sera marquee payee pour le groupe. Le pret sera suivi dans Finance &rarr; Prets entre membres.</div>
-      <div id="pret_list"></div>
-    `);
-
-    const box = pretOv.querySelector("#pret_list");
-    box.innerHTML = autresParticipants.length
-      ? autresParticipants.map((m) => `
-          <div class="row" data-preteur="${m.id}" style="cursor:pointer;">
-            <div class="avatar">${initials(m)}</div>
-            <div class="info"><div class="name">${esc(fullName(m))}</div></div>
-          </div>`).join("")
-      : emptyHTML("Aucun autre participant sur ce dimanche.");
-
-    pretOv.querySelector("[data-close]").addEventListener("click", closeSheet);
-
-    box.querySelectorAll("[data-preteur]").forEach((el) =>
-      el.addEventListener("click", async () => {
-        try {
-          await enregistrerPretMembre(idPaiement, /** @type {HTMLElement} */ (el).dataset.preteur);
-          closeSheet();
-          toast("Pret enregistre — cotisation payee");
-          await refreshWeekRows();
-          notifyAutresEcrans();
-        } catch (err) {
-          toast(err.message || "Erreur", "error");
-        }
-      }),
-    );
-  }
+  // Fonction supprimée : prets entre membres désactivés.
 
   ov.querySelector("#wd_delete").addEventListener("click", async () => {
     const ok = await confirmWithPassword(
