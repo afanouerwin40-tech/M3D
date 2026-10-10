@@ -90,8 +90,8 @@
  * @sideEffect Aucun. La fonction ne touche ni au DOM ni à la base : elle se
  *   contente de décrire ce qui doit être affiché et fixé.
  */
-function construireAuJourdhuiItems(irreguliersIds, aRelancer, pretsEnAttenteArray,
-                                  openARelancerSheet, openPretsEnAttenteSheet,
+function construireAuJourdhuiItems(irreguliersIds, aRelancer,
+                                  openARelancerSheet,
                                   fullName, initials, fmt, fmtDate, emptyHTML, memById) {
   const aujourdhuiItems = [];
 
@@ -127,22 +127,6 @@ function construireAuJourdhuiItems(irreguliersIds, aRelancer, pretsEnAttenteArra
       label: `${aRelancer.length} membre${aRelancer.length > 1 ? "s" : ""} a relancer`,
       meta: "Absents ou en retard de cotisation",
       onClick: () => openARelancerSheet(aRelancer),
-    });
-  }
-
-  // --- Alerte 3 : les prêts entre membres non remboursés --------------------
-  // Le test est doubles : `pretsEnAttenteArray &&` protège contre un tableau
-  // absent ou null (la fonction ne doit pas planter si l'appelant n'a rien
-  // calculé), `length > 0` évite d'afficher une alerte vide.
-  if (pretsEnAttenteArray && pretsEnAttenteArray.length > 0) {
-    aujourdhuiItems.push({
-      id: "auj-prets",
-      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="M8 12h8"/></svg>`,
-      bg: "var(--bg-warning)",
-      color: "var(--warning)",
-      label: `${pretsEnAttenteArray.length} pret${pretsEnAttenteArray.length > 1 ? "s" : ""} en attente`,
-      meta: "Remboursement entre membres a suivre",
-      onClick: () => openPretsEnAttenteSheet(pretsEnAttenteArray, memById),
     });
   }
 

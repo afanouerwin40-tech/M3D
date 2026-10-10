@@ -1,17 +1,15 @@
 /**
- * @file finances.js - Module Finance : Caisse, Dettes et Prêts entre membres.
+ * @file finances.js - Module Finance : Caisse et Dettes.
  * @description Gère l'affichage et les interactions de l'onglet Finance.
  *
  * ---------------------------------------------------------------------------
  * RÔLE DE CE FICHIER
  * ---------------------------------------------------------------------------
- * Trois domaines financiers tiennent dans le même onglet :
+ * Deux domaines financiers tiennent dans le même onglet :
  *
  *   - la CAISSE : l'argent réellement encaissé et dépensé, avec son solde ;
  *   - les DETTES : les cotisations dues par des membres et non versées
- *     (les « impayés ») ;
- *   - les PRÊTS : l'argent qu'un membre absent a fait avancer par un autre,
- *     à rembourser entre eux, hors caisse de l'association.
+ *     (les « impayés »).
  *
  * ---------------------------------------------------------------------------
  * COMMUNICATION AVEC db.js
@@ -24,8 +22,6 @@
  *   dettesList()            → dettes calculées, avec statut et remboursement
  *   totalDettesImpayees()   → somme des seules dettes encore impayées
  *   ajusterCaisse(montant)  → écrit l'écart de caisse
- *   pretsMembres(opts)      → liste des prêts entre membres
- *   marquerPretRembourse()  → bascule l'état d'un prêt
  *   log(entite, action, r)  → journalise l'opération
  *
  * Exception assumée : les petits ajouts directs (`db.caisse_mouvements.add`,
@@ -46,14 +42,8 @@
  * on ne formate qu'au dernier moment, à l'affichage.
  */
 
-// État de navigation de l'onglet Finance : "caisse" | "dettes" | "prets".
-// Conservée en variable globale (hors fonction) pour survivre au re-rendu :
-// c'est la seule donnée qui doit persister d'un changement de vue à l'autre.
+// État de navigation de l'onglet Finance : "caisse" | "dettes".
 let financeVue = "caisse";
-
-// État filtre des prêts : false = ne montrer que les prêts en attente (défaut),
-// true = montrer les prêts remboursés.
-let pretsShowRembourses = false;
 
 // ============================================================================
 // FINANCE — HUB CAISSE, DETTES & PRÊTS
@@ -86,30 +76,21 @@ let pretsShowRembourses = false;
  */
 async function renderFinance() {
   const dettesTotal = await totalDettesImpayees();
-  const pretsEnAttente = (await pretsMembres({ nonRembourseSeulement: true })).length;
 
   app.innerHTML = `
     <div class="section-title" style="margin-top:0;"><h2>Finance</h2></div>
     <div class="segmented" style="margin-bottom:16px;">
       <button class="btn-chip ${financeVue === "caisse" ? "active" : ""}" id="financeSegCaisse">Caisse</button>
       <button class="btn-chip ${financeVue === "dettes" ? "active" : ""}" id="financeSegDettes">Dettes${dettesTotal > 0 ? ` (${fmt(dettesTotal)})` : ""}</button>
-      <button class="btn-chip ${financeVue === "prets" ? "active" : ""}" id="financeSegPrets">Prets${pretsEnAttente > 0 ? ` (${pretsEnAttente})` : ""}</button>
     </div>
     <div id="financeBody"></div>
   `;
 
-  // Les trois gestionnaires sont identiques : ils ne font que fixer `financeVue`
-  // et relancer le rendu. Ce sont des « callbacks » (fonctions de rappel) :
-  // `addEventListener` les stocke et les exécutera au clic.
   document.getElementById("financeSegCaisse").addEventListener("click", () => { financeVue = "caisse"; renderFinance(); });
   document.getElementById("financeSegDettes").addEventListener("click", () => { financeVue = "dettes"; renderFinance(); });
-  document.getElementById("financeSegPrets").addEventListener("click", () => { financeVue = "prets"; renderFinance(); });
 
-  // Routage : on délgue le contenu à la sous-vue correspondante. Le `else`
-  // final sert de valeur par défaut (caisse).
   const body = document.getElementById("financeBody");
   if (financeVue === "dettes") await renderDettes(body);
-  else if (financeVue === "prets") await renderPretsMembres(body);
   else await renderCaisse(body);
 }
 
@@ -670,90 +651,5 @@ async function openRembourser(idPaiement) {
 }
 
 // ============================================================================
-// PRÊTS PERSONNELS ENTRE MEMBRES
+// FINANCES — CAISSE, DETTES ET ACTIVITÉS
 // ============================================================================
-
-/**
- * Rendu de la sous-vue Prêts entre membres, intégrée au hub Finance.
- *
- * CAS D'USAGE : quand un membre est absent le dimanche, un autre peut régler
- * sa cotisation à sa place. L'association est alors serviced, la dette
- * n'apparaît donc PAS dans l'onglet Dettes : c'est une affaire privée entre
- * les deux membres. La table `prets_membres` trace donc deux parties
- * (`id_debiteur`, `id_preteur`), un montant et une date.
- *
- * CONTRASTE AVEC LES DETTES
- * Un prêt n'est pas un mouvement de caisse : l'argent n'est pas entré dans les
- * comptes de l'association, il a seulement circulé entre deux membres. Seule
- * la FLIP (`rembourse`) est gérée ici, par `marquerPretRembourse()`.
- *
- * @param {HTMLElement} [container] - Élément cible ; par défaut #financeBody.
- * @returns {Promise<void>}
- */
-async function renderPretsMembres(container) {
-  const el = container || document.getElementById("financeBody");
-  if (!el) return;
-
-  el.innerHTML = `
-    <div class="small-note" style="margin-bottom:12px;">Quand un membre absent se fait avancer sa cotisation par un autre, le groupe est deja regle. C'est ici que s'organisent les remboursements entre membres.</div>
-    <div class="row" style="border:none;padding:0 4px 12px;justify-content:flex-start;gap:8px;">
-      <button class="btn-chip ${!pretsShowRembourses ? "active" : ""}" id="prets_filtre_attente">En attente</button>
-      <button class="btn-chip ${pretsShowRembourses ? "active" : ""}" id="prets_filtre_rembourses">Rembourses</button>
-    </div>
-    <button class="btn btn-ghost" id="pretsExportBtn" style="margin-bottom:16px;">Exporter en PDF</button>
-    <div id="pretsBox"></div>
-  `;
-
-  // Les deux filtres ne font que changer l'indicateur global puis redessiner
-  // la même sous-vue : à l'intérieur d'un onglet, le motif reste « état global
-  // + re-rendu », jamais de navigation vers un autre écran.
-  document.getElementById("prets_filtre_attente").addEventListener("click", () => {
-    pretsShowRembourses = false;
-    renderPretsMembres(el);
-  });
-  document.getElementById("prets_filtre_rembourses").addEventListener("click", () => {
-    pretsShowRembourses = true;
-    renderPretsMembres(el);
-  });
-  document.getElementById("pretsExportBtn").addEventListener("click", exportPretsMembresPDF);
-
-  // `nonRembourseSeulement: !pretsShowRembourses` : le filtre est poussé dans
-  // db.js, qui trie par date décroissante au passage.
-  const prets = await pretsMembres({ nonRembourseSeulement: !pretsShowRembourses });
-  const membres = await db.membres.toArray();
-  // Index de recherche : transforme un tableau de membres en objet indexé par
-  // id. `memById[unId]` est ainsi en O(1), au lieu d'un `find` linéaire par
-  // emprunt. C'est le « pattern » d'indexation utilisé dans tout le projet.
-  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const box = document.getElementById("pretsBox");
-
-  box.innerHTML = prets.length
-    ? prets.map((p) => {
-        const debiteur = memById[p.id_debiteur];
-        const preteur = memById[p.id_preteur];
-        return `<div class="card" style="margin-bottom:10px;">
-          <div class="detail-row" style="border:none;padding:0 0 4px;">
-            <span class="k" style="font-weight:600;color:var(--text);">${debiteur ? esc(fullName(debiteur)) : "?"} doit a ${preteur ? esc(fullName(preteur)) : "?"}</span>
-            <span class="v">${fmt(p.montant)}</span>
-          </div>
-          <div class="small-note" style="margin-bottom:10px;">${fmtDate(p.date)}${p.rembourse ? " &middot; Rembourse" : ""}</div>
-          <button class="btn-chip ${p.rembourse ? "" : "active"}" data-toggle-pret="${p.id}">${p.rembourse ? "Marquer non rembourse" : "Marquer rembourse"}</button>
-        </div>`;
-      }).join("")
-    : emptyHTML(pretsShowRembourses ? "Aucun pret rembourse pour l'instant." : "Aucun pret en attente. Tout le monde est a jour !");
-
-  // Délégation d'événements sur les boutons : l'id du prêt voyage dans
-  // `data-toggle-pret`, ce qui évite de reconstruire des fermetures.
-  box.querySelectorAll("[data-toggle-pret]").forEach((btn) =>
-    btn.addEventListener("click", async () => {
-      const id = /** @type {HTMLElement} */ (btn).dataset.togglePret;
-      // `find` ramène le prêt pour connaître son état actuel : le bouton
-      // fait un TOGGLE (`!pret.rembourse`), ce qui permet aussi d'annuler
-      // une erreur de saisie sans supprimer la ligne.
-      const pret = prets.find((p) => p.id === id);
-      await marquerPretRembourse(id, !pret.rembourse);
-      toast(pret.rembourse ? "Marque non rembourse" : "Marque rembourse");
-      renderPretsMembres(el);
-    }),
-  );
-}

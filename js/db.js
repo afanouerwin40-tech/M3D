@@ -500,7 +500,6 @@ db.version(4).stores({
   activity_log: "++seq, date, entite, action",
   listes: "id, nom, date, archivee",
   liste_membres: "id, id_liste, id_membre",
-  prets_membres: "id, id_dimanche, id_debiteur, id_preteur, rembourse",
 });
 // Version 5 : correction de bug — le champ "id_paiement" de prets_membres
 // etait utilise partout dans le code (db.prets_membres.where("id_paiement")
@@ -522,8 +521,6 @@ db.version(5).stores({
   activity_log: "++seq, date, entite, action",
   listes: "id, nom, date, archivee",
   liste_membres: "id, id_liste, id_membre",
-  prets_membres:
-    "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
 });
 
 // Version 6 : les listes personnalisees deviennent des "activites" a part
@@ -554,8 +551,6 @@ db.version(6)
     activity_log: "++seq, date, entite, action",
     listes: "id, nom, date, archivee",
     liste_membres: "id, id_liste, id_membre",
-    prets_membres:
-      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
     liste_frais: "id, id_liste",
     liste_paiements: "id, id_liste, id_membre",
   })
@@ -642,8 +637,6 @@ db.version(7)
     activity_log: "++seq, date, entite, action",
     listes: "id, nom, date, archivee, type",
     liste_membres: "id, id_liste, id_membre",
-    prets_membres:
-      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
     liste_frais: "id, id_liste",
     liste_paiements: "id, id_liste, id_membre",
   })
@@ -702,8 +695,6 @@ db.version(8)
     activity_log: "++seq, date, entite, action",
     listes: "id, nom, date, archivee, type",
     liste_membres: "id, id_liste, id_membre",
-    prets_membres:
-      "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
     liste_frais: "id, id_liste",
     liste_paiements: "id, id_liste, id_membre",
   })
@@ -773,7 +764,39 @@ db.version(9)
 // qu'on oublie d'ouvrir la base explicitement, cette fonction le signale
 // au lieu de laisser une transaction echouer plus tard sur un
 // "objectStore was not found" qui ne dit rien de sa source.
-const SCHEMA_VERSION = 9;
+// ---------------------------------------------------------------------------
+// v10 — SUPPRESSION FONCTIONNALITE PRETS ENTRE MEMBRES (AVRIL 2026)
+//
+// Stratégie : conserver la table prets_membres dans le schéma (pas de perte
+// de données historiques), mais supprimer toutes les fonctions applicatives
+// et l'interface. La table reste accessible en lecture (pour historique)
+// mais aucune opération d'écriture n'est proposée dans l'UI.
+// ---------------------------------------------------------------------------
+db.version(10)
+  .stores({
+    membres: "id, nom, prenom, statut, mois_anniversaire",
+    sessions: "id, nom",
+    dimanches: "id, id_session, date, statut",
+    anniversaires_du_jour: "id, id_dimanche, id_membre_fete",
+    paiements: "id, id_dimanche, id_membre",
+    remboursements: "id, id_membre, id_paiement_concerne, date_remboursement",
+    caisse_mouvements: "id, date, type, categorie",
+    parametres: "cle",
+    activity_log: "++seq, date, entite, action",
+    listes: "id, nom, date, archivee, type",
+    liste_membres: "id, id_liste, id_membre",
+    prets_membres: "id, id_dimanche, id_debiteur, id_preteur, id_paiement, rembourse",
+    liste_frais: "id, id_liste",
+    liste_paiements: "id, id_liste, id_membre",
+    dons: "id, id_activite, id_membre, date",
+  })
+  .upgrade(async () => {
+    // Conservation explicite : la table prets_membres reste dans le schéma
+    // v10 pour préserver les données historiques. Aucune conversion ni
+    // suppression physique n'est effectuée par cette migration.
+  })
+
+const SCHEMA_VERSION = 10;
 
 /**
  * Ouvre la base et verifie que le schema sur disque correspond au schema
@@ -953,7 +976,6 @@ async function reinitialiserToutesDonnees() {
       db.liste_frais,
       db.liste_membres,
       db.liste_paiements,
-      db.prets_membres,
       db.activity_log,
       db.dons,
     ],
@@ -1665,49 +1687,6 @@ async function marquerPaiement(idPaiement, aPaye) {
 }
 
 // ------------------------------------------------------------------
-// PRETS ENTRE MEMBRES
-// ------------------------------------------------------------------
-// Cas d'usage : un membre est absent un dimanche, un autre membre present
-// avance sa cotisation pour lui. Cote GROUPE, la cotisation est consideree
-// payee immediatement (le groupe a bien recu son argent). Le pret est un
-// arrangement PERSONNEL entre les deux membres, suivi separement des
-// dettes du groupe.
-async function enregistrerPretMembre(idPaiement, idPreteur) {
-  const p = await db.paiements.get(idPaiement);
-  if (!p) return;
-  if (p.id_membre === idPreteur)
-    throw new Error("Un membre ne peut pas preter a lui-meme.");
-  // La date du pret doit etre celle du DIMANCHE concerne (pas la date a
-  // laquelle on saisit/enregistre le pret dans l'app, qui peut etre
-  // differente si on rattrape une saisie en retard).
-  const dim = await db.dimanches.get(p.id_dimanche);
-  await db.paiements.update(idPaiement, {
-    a_paye: true,
-    montant_paye: p.montant_attendu,
-  });
-  await db.prets_membres.add({
-    id: uid(),
-    id_dimanche: p.id_dimanche,
-    id_paiement: idPaiement,
-    id_debiteur: p.id_membre,
-    id_preteur: idPreteur,
-    montant: p.montant_attendu,
-    date: dim ? dim.date : todayISO(),
-    rembourse: false,
-  });
-  await log("pret", "enregistre", idPaiement);
-}
-async function pretsMembres({ nonRembourseSeulement = false } = {}) {
-  let all = await db.prets_membres.toArray();
-  if (nonRembourseSeulement) all = all.filter((p) => !p.rembourse);
-  return all.sort((a, b) => b.date.localeCompare(a.date));
-}
-async function marquerPretRembourse(idPret, rembourse) {
-  await db.prets_membres.update(idPret, { rembourse });
-  await log("pret", rembourse ? "rembourse" : "remise_a_zero", idPret);
-}
-
-// ------------------------------------------------------------------
 // REGULARITE — signale un membre qui a rate ses 2 DERNIERES cotisations
 // (deux dimanches consecutifs non payes, ordre chronologique). Un pret
 // enregistre via enregistrerPretMembre() compte comme "paye" (a_paye
@@ -1894,15 +1873,8 @@ async function passerMembreInactif(idMembre) {
     "rw",
     db.membres,
     db.paiements,
-    db.prets_membres,
     async () => {
       for (const p of impayes) await db.paiements.delete(p.id);
-      const pretsEnCours = await db.prets_membres
-        .where("id_debiteur")
-        .equals(idMembre)
-        .and((pr) => !pr.rembourse)
-        .toArray();
-      for (const pr of pretsEnCours) await db.prets_membres.delete(pr.id);
       await db.membres.update(idMembre, { statut: "Inactif" });
     },
   );
@@ -2511,30 +2483,12 @@ async function rapportIndividuelMembre(idMembre) {
   );
   const detteGroupeTotal = detteGroupeDetail.reduce((a, d) => a + d.montant, 0);
 
-  // Prets entre membres : ce membre comme DEBITEUR (il doit rembourser).
-  const tousLesPrets = await pretsMembres();
-  const membres = await db.membres.toArray();
-  const memById = Object.fromEntries(membres.map((m) => [m.id, m]));
-  const nomOf = (id) =>
-    memById[id] ? `${memById[id].nom} ${memById[id].prenom}`.trim() : "?";
-  const pretsADevoir = tousLesPrets
-    .filter((p) => p.id_debiteur === idMembre)
-    .map((p) => ({ ...p, autreMembre: nomOf(p.id_preteur) }));
-  const pretsADevoirEnAttente = pretsADevoir.filter((p) => !p.rembourse);
-  const pretsADevoirTotal = pretsADevoirEnAttente.reduce(
-    (a, p) => a + p.montant,
-    0,
-  );
-
-  // Prets entre membres : ce membre comme PRETEUR (on lui doit de l'argent).
-  const pretsAPRecevoir = tousLesPrets
-    .filter((p) => p.id_preteur === idMembre)
-    .map((p) => ({ ...p, autreMembre: nomOf(p.id_debiteur) }));
-  const pretsARecevoirEnAttente = pretsAPRecevoir.filter((p) => !p.rembourse);
-  const pretsARecevoirTotal = pretsARecevoirEnAttente.reduce(
-    (a, p) => a + p.montant,
-    0,
-  );
+  // Prêts entre membres : fonctionnalité supprimée (v10). Données
+  // historiques conservées (table prets_membres), mais non utilisées.
+  const pretsADevoirEnAttente = [];
+  const pretsADevoirTotal = 0;
+  const pretsARecevoirEnAttente = [];
+  const pretsARecevoirTotal = 0;
 
   return {
     membre,
