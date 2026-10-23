@@ -75,9 +75,9 @@
  *
  * @param {Array} irreguliersIds - IDs des membres irréguliers
  * @param {Array} aRelancer - Membres à relancer
- * @param {Array} pretsEnAttenteArray - Prêts en attente
- * @param {Function} openARelancerSheet - Fonction d'ouverture de la feuille
- * @param {Function} openPretsEnAttenteSheet - Fonction d'ouverture de la feuille de prêts
+ * @param {Array} pretsEnAttenteArray - Prêts en attente de remboursement
+ * @param {Function} openARelancerSheet - Fonction d'ouverture de la feuille "à relancer"
+ * @param {Function} openPretsEnAttenteSheet - Fonction d'ouverture de la feuille des prêts
  * @param {Function} fullName - Fonction pour obtenir le nom complet
  * @param {Function} initials - Fonction pour obtenir les initiales
  * @param {Function} fmt - Fonction de formatage monétaire
@@ -90,8 +90,8 @@
  * @sideEffect Aucun. La fonction ne touche ni au DOM ni à la base : elle se
  *   contente de décrire ce qui doit être affiché et fixé.
  */
-function construireAuJourdhuiItems(irreguliersIds, aRelancer,
-                                  openARelancerSheet,
+function construireAuJourdhuiItems(irreguliersIds, aRelancer, pretsEnAttenteArray,
+                                  openARelancerSheet, openPretsEnAttenteSheet,
                                   fullName, initials, fmt, fmtDate, emptyHTML, memById) {
   const aujourdhuiItems = [];
 
@@ -127,6 +127,19 @@ function construireAuJourdhuiItems(irreguliersIds, aRelancer,
       label: `${aRelancer.length} membre${aRelancer.length > 1 ? "s" : ""} a relancer`,
       meta: "Absents ou en retard de cotisation",
       onClick: () => openARelancerSheet(aRelancer),
+    });
+  }
+
+  // --- Alerte 3 : prêts entre membres en attente de remboursement ----------
+  if (pretsEnAttenteArray.length > 0) {
+    aujourdhuiItems.push({
+      id: "auj-prets",
+      icon: `<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2z"/><path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6l4 2"/></svg>`,
+      bg: "var(--bg-info)",
+      color: "var(--info)",
+      label: `${pretsEnAttenteArray.length} pret${pretsEnAttenteArray.length > 1 ? "s" : ""} en attente`,
+      meta: "Remboursement non enregistre",
+      onClick: () => openPretsEnAttenteSheet(pretsEnAttenteArray, memById),
     });
   }
 

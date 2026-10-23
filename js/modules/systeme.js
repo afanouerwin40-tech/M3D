@@ -558,3 +558,9 @@ function showLoginScreen() {
     if (e.key === "Enter") doLogin();
   });
 }
+
+// Export functions to window for cross-module access
+if (typeof window !== "undefined") {
+  window.openARelancerSheet = openARelancerSheet;
+  window.openPretsEnAttenteSheet = openPretsEnAttenteSheet;
+}

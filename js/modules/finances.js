@@ -425,6 +425,41 @@ async function openAjusterCaisse() {
  * @param {HTMLElement} [container] - Élément cible ; par défaut #financeBody.
  * @returns {Promise<void>}
  */
+/**
+ * Calcule le dimanche de la semaine courante (ou dernière semaine écoulée) en Afrique/Lomé (UTC+0).
+ * Retourne la date ISO (YYYY-MM-DD) du dimanche.
+ */
+function getCurrentWeekSunday() {
+  const now = new Date();
+  // Togo (Africa/Lome) est en UTC+0 sans changement d'heure saisonnier
+  const day = now.getUTCDay(); // 0 = dimanche
+  const diff = (day === 0) ? 0 : -day; // si dimanche, aujourd'hui ; sinon remonter au dimanche précédent
+  const sunday = new Date(now);
+  sunday.setUTCDate(now.getUTCDate() + diff);
+  sunday.setUTCHours(23, 59, 59, 999); // fin de journée
+  return sunday.toISOString().split('T')[0]; // YYYY-MM-DD
+}
+
+/**
+ * Récupère ou initialise le filtre hebdomadaire des dettes.
+ * Réinitialise automatiquement à "semaine_courante" si on change de semaine.
+ */
+async function getDettesWeeklyFilter() {
+  const currentWeekSunday = getCurrentWeekSunday();
+  const stored = await getParam("dettes_weekly_filter", null);
+  if (stored && stored.weekSunday === currentWeekSunday) {
+    return stored.mode; // "semaine_courante" ou "toutes"
+  }
+  // Nouvelle semaine : réinitialiser à "semaine_courante"
+  await setParam("dettes_weekly_filter", { weekSunday: currentWeekSunday, mode: "semaine_courante" });
+  return "semaine_courante";
+}
+
+async function setDettesWeeklyFilter(mode) {
+  const currentWeekSunday = getCurrentWeekSunday();
+  await setParam("dettes_weekly_filter", { weekSunday: currentWeekSunday, mode });
+}
+
 async function renderDettes(container) {
   const el = container || document.getElementById("financeBody");
   if (!el) return;
@@ -435,61 +470,184 @@ async function renderDettes(container) {
   // au plus ancien.
   const impayees = dettes.filter((d) => d.statut === "Impayee");
   const remboursees = dettes.filter((d) => d.statut === "Remboursee");
+
+  // Filtre hebdomadaire : "semaine_courante" ou "toutes"
+  const weeklyFilter = await getDettesWeeklyFilter();
+  const currentWeekSunday = getCurrentWeekSunday();
+  let impayeesFiltered = impayees;
+  if (weeklyFilter === "semaine_courante") {
+    // Ne garder que les dettes du dimanche de la semaine courante
+    impayeesFiltered = impayees.filter((d) => d.date === currentWeekSunday);
+  }
   // `reduce` cumule les montants : le total n'est stocké nulle part, il est
   // calculé à chaque rendu.
-  const total = impayees.reduce((a, d) => a + d.montant, 0);
+  const total = impayeesFiltered.reduce((a, d) => a + d.montant, 0);
+
+  // Regroupement des dettes impayées par membre (par ID unique)
+  const dettesParMembre = new Map();
+  for (const d of impayeesFiltered) {
+    const key = d.id_membre;
+    if (!dettesParMembre.has(key)) {
+      dettesParMembre.set(key, {
+        id_membre: key,
+        nom: d.membre,
+        telephone: d.telephone,
+        dettes: [],
+        totalMontant: 0,
+        nbDettes: 0,
+      });
+    }
+    const membreData = dettesParMembre.get(key);
+    membreData.dettes.push(d);
+    membreData.totalMontant += d.montant;
+    membreData.nbDettes += 1;
+  }
+
+  // Conversion en tableau trié par montant décroissant (ou nom)
+  const membresAvecDettes = Array.from(dettesParMembre.values())
+    .sort((a, b) => b.totalMontant - a.totalMontant || a.nom.localeCompare(b.nom));
+
+  // Label du filtre pour l'affichage
+  const filterLabel = weeklyFilter === "semaine_courante"
+    ? ` (semaine du ${fmtDate(currentWeekSunday)})`
+    : ` (toutes)`;
 
   el.innerHTML = `
     <div class="card" style="text-align:center;padding:20px;margin-bottom:18px;">
-      <div class="small-note">Total impaye</div>
+      <div class="small-note">Total impaye${filterLabel}</div>
       <div style="font-family:var(--font-sans);font-size:28px;font-weight:700;color:var(--danger);margin-top:2px;">${fmt(total)}</div>
     </div>
-    <div class="section-title" style="margin-top:0;"><h2>Impayees (${impayees.length})</h2></div>
+    <div class="section-title" style="margin-top:0;display:flex;justify-content:space-between;align-items:center;">
+      <h2>Impayees (${membresAvecDettes.length} membre${membresAvecDettes.length > 1 ? "s" : ""})</h2>
+      <div class="btn-chip-group" style="display:flex;gap:6px;">
+        <button class="btn-chip ${weeklyFilter === "semaine_courante" ? "active" : ""}" id="filterSemaine" data-mode="semaine_courante">Cette semaine</button>
+        <button class="btn-chip ${weeklyFilter === "toutes" ? "active" : ""}" id="filterToutes" data-mode="toutes">Toutes</button>
+      </div>
+    </div>
     <div class="card list-card" id="dettesImpayees"></div>
     ${remboursees.length ? `<div class="section-title"><h2>Remboursees (${remboursees.length})</h2></div><div class="card list-card" id="dettesRemb"></div>` : ""}
   `;
 
-  // Une dette encore impayee ne montre que son montant attendu. Une dette
-  // remboursee affiche en plus qui a rembourse, quand et pour quel
-  // montant reel — le montant encaisse peut differer du montant attendu.
-  //
-  // `rowHTML` est une fonction de gabarit locale : elle produit une ligne
-  // HTML et prend le booléen `actionable` pour savoir si la ligne est cliquable
-  // (impayée = action possible) ou purement informative (déjà soldée).
-  const rowHTML = (d, actionable) => {
-    const meta = actionable
-      ? fmtDate(d.date)
-      : `${fmtDate(d.date)} &middot; rembourse par ${esc(d.remb_par || "?")}`
-        + `${d.remb_date ? " le " + fmtDate(d.remb_date) : ""}`;
-    // `!= null` (et non `!x`) teste à la fois `null` ET `undefined` : c'est
-    // la manière idiomatique de dire « une valeur a été fournie ».
-    const montant = !actionable && d.remb_montant != null && d.remb_montant !== d.montant
-      ? `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.remb_montant)}</span>`
-      : `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>`;
+  // Rendu de la liste groupée par membre
+  const membreRowHTML = (membreData) => {
+    const derniereDate = membreData.dettes
+      .map((d) => d.date)
+      .sort()
+      .reverse()[0];
     return `
-    <div class="row" ${actionable ? `data-paiement="${d.id_paiement}"` : ""}>
-      <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${(d.membre[0] || "?").toUpperCase()}</div>
-      <div class="info"><div class="name">${esc(d.membre)}</div><div class="meta">${meta}</div></div>
-      ${montant}
+    <div class="row" data-membre="${membreData.id_membre}" style="cursor:pointer;">
+      <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${(membreData.nom[0] || "?").toUpperCase()}</div>
+      <div class="info">
+        <div class="name">${esc(membreData.nom)}</div>
+        <div class="meta">
+          ${membreData.nbDettes} dette${membreData.nbDettes > 1 ? "s" : ""} impayee${membreData.nbDettes > 1 ? "s" : ""}
+          ${derniereDate ? ` &middot; depuis le ${fmtDate(derniereDate)}` : ""}
+        </div>
+      </div>
+      <span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(membreData.totalMontant)}</span>
     </div>`;
   };
 
   document.getElementById("dettesImpayees").innerHTML =
-    impayees.map((d) => rowHTML(d, true)).join("") || emptyHTML("Aucune dette en cours.");
+    membresAvecDettes.map((m) => membreRowHTML(m)).join("") || emptyHTML("Aucune dette en cours.");
 
-  // Délégation d'événements : chaque ligne impayée est cliquable et transmet
-  // l'id du paiement concerné via l'attribut `data-paiement`. Le `.catch()`
-  // évite qu'un rejet de promesse (lecture en base impossible) reste muet :
-  // l'erreur est journalisée dans la console, l'utilisateur n'est pas bloqué.
+  // Clic sur un membre -> ouvrir le détail de ses dettes
   document.querySelectorAll("#dettesImpayees .row").forEach((row) =>
-    row.addEventListener("click", () => openRembourser(/** @type {HTMLElement} */ (row).dataset.paiement).catch((err) => {
-      console.error("[M3D] Ouverture de la modale de remboursement echouee", err);
+    row.addEventListener("click", () => openDetailDettesMembre(/** @type {HTMLElement} */ (row).dataset.membre).catch((err) => {
+      console.error("[M3D] Ouverture du détail des dettes echouee", err);
     })),
   );
 
+  // Filtre hebdomadaire : boutons "Cette semaine" / "Toutes"
+  const filterSemaineBtn = document.getElementById("filterSemaine");
+  const filterToutesBtn = document.getElementById("filterToutes");
+  if (filterSemaineBtn) {
+    filterSemaineBtn.addEventListener("click", async () => {
+      await setDettesWeeklyFilter("semaine_courante");
+      renderDettes();
+    });
+  }
+  if (filterToutesBtn) {
+    filterToutesBtn.addEventListener("click", async () => {
+      await setDettesWeeklyFilter("toutes");
+      renderDettes();
+    });
+  }
+
+  // Remboursees : on garde l'affichage détaillé par paiement (historique)
   if (remboursees.length) {
+    const rowHTML = (d, actionable) => {
+      const meta = actionable
+        ? fmtDate(d.date)
+        : `${fmtDate(d.date)} &middot; rembourse par ${esc(d.remb_par || "?")}`
+          + `${d.remb_date ? " le " + fmtDate(d.remb_date) : ""}`;
+      const montant = !actionable && d.remb_montant != null && d.remb_montant !== d.montant
+        ? `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.remb_montant)}</span>`
+        : `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>`;
+      return `
+      <div class="row" ${actionable ? `data-paiement="${d.id_paiement}"` : ""}>
+        <div class="avatar" style="background:var(--bg-danger);color:var(--danger);">${(d.membre[0] || "?").toUpperCase()}</div>
+        <div class="info"><div class="name">${esc(d.membre)}</div><div class="meta">${meta}</div></div>
+        ${montant}
+      </div>`;
+    };
     document.getElementById("dettesRemb").innerHTML = remboursees.map((d) => rowHTML(d, false)).join("");
   }
+}
+
+/**
+ * Ouvre une feuille de détail montrant toutes les dettes impayees d'un membre.
+ *
+ * @param {string} idMembre - Identifiant du membre.
+ * @returns {Promise<void>}
+ */
+async function openDetailDettesMembre(idMembre) {
+  const dettes = await dettesList();
+  const impayees = dettes.filter((d) => d.statut === "Impayee" && d.id_membre === idMembre);
+  if (impayees.length === 0) return;
+
+  const membre = await db.membres.get(idMembre);
+  const nomMembre = membre ? `${membre.nom} ${membre.prenom}` : impayees[0].membre;
+
+  // Trier par date (plus recent en premier)
+  impayees.sort((a, b) => b.date.localeCompare(a.date));
+
+  const rows = impayees.map((d) => {
+    const montantBadge = d.remb_montant != null && d.remb_montant !== d.montant
+      ? `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.remb_montant)}</span>`
+      : `<span class="badge" style="background:var(--bg-danger);color:var(--danger);">${fmt(d.montant)}</span>`;
+    return `
+    <div class="row" data-paiement="${d.id_paiement}">
+      <div class="info" style="flex:1;">
+        <div class="name">${esc(nomMembre)}</div>
+        <div class="meta">${fmtDate(d.date)}</div>
+      </div>
+      ${montantBadge}
+    </div>`;
+  }).join("");
+
+  const total = impayees.reduce((a, d) => a + d.montant, 0);
+
+  const ov = openSheet(`
+    <button class="sheet-close" data-close aria-label="Fermer">&times;</button>
+    <h3>Dettes de ${esc(nomMembre)}</h3>
+    <div class="small-note" style="margin-bottom:12px;">
+      ${impayees.length} dette${impayees.length > 1 ? "s" : ""} &middot; Total : <b>${fmt(total)}</b>
+    </div>
+    <div style="margin-top:12px;">${rows}</div>
+  `);
+
+  ov.querySelector("[data-close]").addEventListener("click", closeSheet);
+
+  // Clic sur une dette individuelle -> ouvrir remboursement
+  ov.querySelectorAll(".row[data-paiement]").forEach((row) =>
+    row.addEventListener("click", () => {
+      closeSheet();
+      openRembourser(/** @type {HTMLElement} */ (row).dataset.paiement).catch((err) => {
+        console.error("[M3D] Ouverture de la modale de remboursement echouee", err);
+      });
+    }),
+  );
 }
 
 /**
