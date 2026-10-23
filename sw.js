@@ -36,7 +36,7 @@
 //     ne sera jamais disponible hors-ligne.
 //
 
-const CACHE_NAME = "m3d-cache-v39"; // v39 : services PDF (socle + composants + 5 rapports)
+const CACHE_NAME = "m3d-cache-v41"; // v41 : affichage de la version de l'application
 
 /**
  * Liste exhaustive des ressources à mettre en cache à l'installation.
@@ -56,6 +56,7 @@ const CACHE_NAME = "m3d-cache-v39"; // v39 : services PDF (socle + composants + 
 const ASSETS = [
   "./",
   "./index.html",
+  "./VERSION",
   "./manifest.webmanifest",
   // Feuilles de styles modulaires
   "./css/variables.css",

@@ -160,11 +160,11 @@ function rendreAuJourdhuiBox(aujourdhuiItems, esc) {
   // un tableau vide laisserait croire à un bug, un message affirmatif non.
   return aujourdhuiItems.length
     ? aujourdhuiItems.map((it) => `
-        <div class="row" data-auj-id="${it.id}">
+        <button type="button" class="row aujourdhui-action" data-auj-id="${it.id}">
           <div class="avatar" style="background:${it.bg};color:${it.color};">${it.icon}</div>
           <div class="info"><div class="name">${it.label}</div><div class="meta">${it.meta}</div></div>
           <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="var(--text-3)" stroke-width="2" aria-hidden="true"><path stroke-linecap="round" stroke-linejoin="round" d="m9 6 6 6-6 6"/></svg>
-        </div>`).join("")
+        </button>`).join("")
     : `<div class="row"><div class="avatar" style="background:var(--bg-success);color:var(--success);"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path stroke-linecap="round" stroke-linejoin="round" d="m9 12 2 2 4-4"/></svg></div><div class="info"><div class="name">Rien ne demande votre attention</div><div class="meta">Tout est a jour</div></div></div>`;
 }
 
